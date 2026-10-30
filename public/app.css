@@ -93,10 +93,13 @@ h2.act small { font-weight: 500; letter-spacing: 0; text-transform: none; color:
 .edtabs button.adj.has { background: var(--adj); color: var(--adj-ink); border-radius: 8px 8px 0 0; }
 .edtabs button.adj.has i { background: var(--adj-ink); }
 .edbody { flex: 1; display: flex; min-height: 0; }
-.edbody textarea { flex: 1; width: 100%; resize: none; border: 0; outline: none; background: transparent; padding: 18px 18px 40px; font: 17px/1.6 var(--ui); }
-.edbody textarea.prose { font: 19px/1.7 var(--prose); max-width: 46em; margin: 0 auto; padding-left: max(18px, calc((100% - 40em) / 2)); padding-right: max(18px, calc((100% - 40em) / 2)); }
+.edbody textarea { flex: 1; width: 100%; resize: none; border: 0; outline: none; background: transparent; padding: 18px 18px 40px; font: calc(16px * var(--efs, 1))/1.6 var(--ui); }
+.edbody textarea.prose { font: calc(18px * var(--efs, 1))/1.7 var(--prose); max-width: 46em; margin: 0 auto; padding-left: max(18px, calc((100% - 40em) / 2)); padding-right: max(18px, calc((100% - 40em) / 2)); }
 .edbody textarea.adjust { background: color-mix(in srgb, var(--adj) 45%, transparent); }
-.edfoot { display: flex; justify-content: space-between; padding: 8px 16px calc(8px + var(--sab)); font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); }
+.efs { display: flex; align-items: center; gap: 4px; }
+.efs button { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 3px 9px; font-size: 13px; font-weight: 600; color: var(--ink2); }
+.efs span { min-width: 38px; text-align: center; }
+.edfoot { align-items: center; display: flex; justify-content: space-between; padding: 8px 16px calc(8px + var(--sab)); font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); }
 .conflict { margin: 6px 12px; padding: 12px; border-radius: 12px; background: color-mix(in srgb, var(--bad) 10%, var(--card)); border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent); font-size: 14px; }
 .cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
 .cmp pre { white-space: pre-wrap; font: 13px/1.4 var(--prose); max-height: 30vh; overflow: auto; background: var(--card); padding: 8px; border-radius: 8px; margin: 4px 0 0; }
@@ -258,7 +261,7 @@ p.big { font-size: 17px; }
   body.editing .fab { right: calc(56% + 24px); }
   .beatrow:hover { border-color: color-mix(in srgb, var(--ink2) 45%, var(--line)); }
   .card:hover { box-shadow: 0 4px 14px rgba(0,0,0,.1); }
-  .edbody textarea.prose { font-size: 20px; }
+  .edbody textarea.prose { font-size: calc(19px * var(--efs, 1)); }
 }
 
 /* phone: hide labels we don't need, keep the editor full-screen */

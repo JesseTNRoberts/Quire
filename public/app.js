@@ -219,7 +219,8 @@ function openBeat(id, focusTitle = false) {
     <div class="conflict" id="edConflict" hidden></div>
     <div class="edtabs" id="edTabs">${TABS.map(([k, l]) => `<button data-tab="${k}" class="${S.tab === k ? 'on' : ''} ${k === 'adjust' ? 'adj' : ''}">${l}<i></i></button>`).join('')}</div>
     <div class="edbody">${TABS.map(([k]) => `<textarea data-field="${k}" class="${k === 'beat' ? 'prose' : ''} ${k === 'adjust' ? 'adjust' : ''}" ${S.tab === k ? '' : 'hidden'} spellcheck="true" placeholder="${{ beat: 'Write the beat…', synopsis: 'One or two sentences. The first works alone as a one-liner.', adjust: 'Instructions for Claude (optional)', notes: 'Notes, earlier versions, finished adjusts…' }[k]}"></textarea>`).join('')}</div>
-    <div class="edfoot"><span id="edWords"></span><span id="edSaved"></span></div>`;
+    <div class="edfoot"><span id="edWords"></span><span class="efs"><button data-efs="-1" aria-label="Smaller text">A−</button><span id="efsv"></span><button data-efs="1" aria-label="Larger text">A+</button></span><span id="edSaved"></span></div>`;
+  applyEfs(); ed.querySelectorAll('[data-efs]').forEach(b => b.onclick = () => applyEfs(+b.dataset.efs));
   for (const ta of ed.querySelectorAll('textarea')) {
     ta.value = b[ta.dataset.field] || '';
     ta.addEventListener('input', () => { book.edit(id, { [ta.dataset.field]: ta.value }); footer(); });
@@ -273,6 +274,15 @@ function conflictBanner() {
     <div class="row-btns"><button class="btn" data-c="mine">Keep mine</button><button class="btn" data-c="theirs">Take theirs</button><button class="btn" data-c="both">Keep both</button></div>`;
   el.querySelectorAll('[data-c]').forEach(x => x.onclick = () => { book.resolve(S.openId, field, x.dataset.c); syncEditor({}); conflictBanner(); });
 }
+
+// Editor text size: a reading preference, kept per device.
+function applyEfs(step = 0) {
+  const v = Math.round(Math.max(0.6, Math.min(1.8, ls.get('quire-efs', 1) + step * 0.1)) * 10) / 10;
+  ls.set('quire-efs', v);
+  document.documentElement.style.setProperty('--efs', v);
+  const s = $('#efsv'); if (s) s.textContent = Math.round(v * 100) + '%';
+}
+applyEfs();
 
 // Bring remote changes into the open editor without losing the caret.
 function syncEditor(detail) {
