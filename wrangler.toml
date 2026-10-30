@@ -5,7 +5,7 @@ compatibility_date = "2026-01-15"
 [assets]
 directory = "./public"
 binding = "ASSETS"
-run_worker_first = ["/api/*"]
+run_worker_first = ["/api/*", "/mcp", "/oauth/*", "/.well-known/*"]
 not_found_handling = "single-page-application"
 
 [[durable_objects.bindings]]
@@ -16,9 +16,17 @@ class_name = "Project"
 name = "REGISTRY"
 class_name = "Registry"
 
+[[durable_objects.bindings]]
+name = "AUTH"
+class_name = "AuthStore"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Project", "Registry"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["AuthStore"]
 
 [vars]
 # Fill these in from Cloudflare Zero Trust > Access > Applications > (your Quire app). See README step 4.
@@ -26,3 +34,30 @@ ACCESS_TEAM_DOMAIN = "https://steep-cherry-ee90.cloudflareaccess.com"
 ACCESS_AUD = "af9200c6a74d996251960e3ab7565f166d75c942cf7df285777807619d5e7658"
 SNAPSHOT_MINUTES = "30"
 # GITHUB_TOKEN is a secret: npx wrangler secret put GITHUB_TOKEN
+
+# ---------------------------------------------------------------------------------------------
+# The Claude connector: the same code deployed as a second worker, "quire-mcp", WITHOUT Cloudflare
+# Access in front (Claude's servers must reach it). It only serves /mcp and OAuth; it uses the main
+# worker's storage. Deploy with:  npx wrangler deploy --env mcp   (after deploying the main worker)
+[env.mcp]
+name = "quire-mcp"
+workers_dev = true
+
+[env.mcp.vars]
+ROLE = "mcp"
+APP_ORIGIN = "https://quire.jesse-tn-roberts.workers.dev"   # the main app, where you approve connections
+
+[[env.mcp.durable_objects.bindings]]
+name = "PROJECT"
+class_name = "Project"
+script_name = "quire"
+
+[[env.mcp.durable_objects.bindings]]
+name = "REGISTRY"
+class_name = "Registry"
+script_name = "quire"
+
+[[env.mcp.durable_objects.bindings]]
+name = "AUTH"
+class_name = "AuthStore"
+script_name = "quire"

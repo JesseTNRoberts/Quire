@@ -1,17 +1,34 @@
 // Quire Worker: serves the app and routes /api/* to the right book's Durable Object.
 import { checkAccess } from './auth.js';
+import { handleOAuth, handleApprove } from './oauth.js';
+import { handleMcp } from './mcp.js';
 export { Project, Registry } from './project.js';
+export { AuthStore } from './oauth.js';
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    // The connector (ROLE=mcp, deployed as quire-mcp): OAuth + MCP endpoints only, no Cloudflare Access in front.
+    // In local development both roles run in one worker.
+    const role = env.ROLE || 'app', mcpOn = role === 'mcp' || env.DEV_NO_AUTH === '1';
+    if (mcpOn) {
+      if (url.pathname === '/mcp') return handleMcp(request, env, url.origin);
+      if (url.pathname.startsWith('/oauth/') || url.pathname.startsWith('/.well-known/')) {
+        const r = await handleOAuth(request, env, url.origin); if (r) return r;
+      }
+    }
+    if (role === 'mcp') {
+      if (url.pathname.startsWith('/icons/')) return env.ASSETS ? env.ASSETS.fetch(request) : new Response('', { status: 404 });
+      return new Response('Quire connector. Add this address + /mcp as a custom connector in Claude.', { status: url.pathname === '/' ? 200 : 404 });
+    }
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
 
     let user;
     try { user = await checkAccess(request, env); } catch (r) { return r instanceof Response ? r : json({ error: String(r) }, 401); }
 
+    if (url.pathname === '/api/oauth/approve') return handleApprove(request, env, user, url.origin);
     if (url.pathname === '/api/me') return json({ ...user, snapshotMinutes: Number(env.SNAPSHOT_MINUTES || 30) });
 
     const registry = env.REGISTRY.get(env.REGISTRY.idFromName('registry'));

@@ -192,6 +192,28 @@ Two routes:
 
 ---
 
+## Claude connector (chats and voice)
+
+Quire includes a remote MCP server, so ordinary Claude chats, and voice mode, can read and edit the book.
+It runs as a second worker, `quire-mcp`, from the same code and storage. It has no Cloudflare Access in front,
+because Claude's servers connect to it. Instead it signs Claude in with OAuth, and the approval page lives on the
+main app, behind Access, so only you can approve.
+
+**Deploy:** in Cloudflare → Workers & Pages → quire → Settings → Builds, set the deploy command to
+`npx wrangler deploy && npx wrangler deploy --env mcp`, then retry the latest build. (If the build can't create the
+second worker, import the same repo as a new Worker named `quire-mcp` with deploy command `npx wrangler deploy --env mcp`.)
+Check that https://quire-mcp.<subdomain>.workers.dev/ says "Quire connector".
+
+**Connect:** claude.ai → Settings → Connectors → Add custom connector → URL `https://quire-mcp.<subdomain>.workers.dev/mcp`
+→ Connect → approve on the Quire page. Then switch it on in a chat (+ → Connectors). Voice mode uses the same connectors.
+
+**Tools:** get_instructions (call first: the book's Claude rules), list_books, list_beats, get_beat, search, list_adjusts,
+list_critical, list_notes, get_note, update_beat, append_to_beat_notes, add_adjust, finish_adjust, mark_critical,
+create_beat, update_note, append_to_note, snapshot. The connector carries its own rules (discuss before acting,
+keep Jesse's words, preserve ==critical== and [[link]] markup), since chats and voice don't load skills.
+
+**Disconnect:** remove the connector in Claude. Tokens last a day and refresh for up to 180 days.
+
 ## Costs and limits
 
 All of this fits Cloudflare's free plan. A whole novel is about 1 MB, and a heavy writing day is a few
