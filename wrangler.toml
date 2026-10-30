@@ -22,7 +22,7 @@ new_sqlite_classes = ["Project", "Registry"]
 
 [vars]
 # Fill these in from Cloudflare Zero Trust > Access > Applications > (your Quire app). See README step 4.
-ACCESS_TEAM_DOMAIN = ""   # e.g. "https://yourteam.cloudflareaccess.com"
-ACCESS_AUD = ""           # the application's "Application Audience (AUD) Tag"
+ACCESS_TEAM_DOMAIN = "https://steep-cherry-ee90.cloudflareaccess.com"
+ACCESS_AUD = "af9200c6a74d996251960e3ab7565f166d75c942cf7df285777807619d5e7658"
 SNAPSHOT_MINUTES = "30"
 # GITHUB_TOKEN is a secret: npx wrangler secret put GITHUB_TOKEN
