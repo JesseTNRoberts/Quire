@@ -1,7 +1,7 @@
 // Quire app UI. Plain DOM, no build step.
 import { pickBackend } from './backend.js';
 import { Book } from './sync.js';
-import { actOf, laneOf, CARD, manuscript, wordCount, exportTree, laneGeom, laneIndexAt, fitInLane, MIN_LANE_H } from './format.js';
+import { actOf, laneOf, CARD, manuscript, wordCount, exportTree, laneGeom, laneIndexAt, fitInLane, MIN_LANE_H, LINK_RE, CRIT_RE, parseLink, findLinks, findCritical, renameLinks, fileName } from './format.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -12,6 +12,7 @@ const ago = t => { if (!t) return 'never'; const s = (Date.now() - t) / 1000; re
 const S = { view: ls.get('quire-view', 'book'), openId: null, openFile: null, tab: 'beat', filter: 'all', q: '', zoom: ls.get('quire-zoom', innerWidth < 700 ? 0.5 : innerWidth < 1200 ? 0.7 : 0.85), slug: ls.get('quire-book', null) };
 let book, backend, me;
 S.linkFrom = null;
+S.showWiki = ls.get('quire-wiki', false);
 window.quire = { S, get book() { return book; }, get backend() { return backend; } }; // for debugging from the console
 
 // ---------------- boot ----------------
@@ -33,6 +34,7 @@ async function openBook(slug) {
   book = new Book(slug, backend);
   let t;
   book.addEventListener('change', e => {
+    S.targets = null;
     syncEditor(e.detail);
     clearTimeout(t); t = setTimeout(renderMain, e.detail.local ? 400 : 30);
   });
@@ -160,7 +162,7 @@ function renderBook(main, fresh) {
   if (!wrap || fresh) {
     main.innerHTML = `<div class="bookview">
       <div class="searchbar"><input type="search" id="q" placeholder="Search beats" value="${esc(S.q)}"></div>
-      <div class="chips" id="filters">${[['all', 'All'], ['adjust', 'Claude adjust'], ['empty', 'Empty'], ['unsynced', 'Not synced'], ['retired', 'Retired']].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <div class="chips" id="filters">${[['all', 'All'], ['critical', 'Critical'], ['adjust', 'Claude adjust'], ['empty', 'Empty'], ['unsynced', 'Not synced'], ['retired', 'Retired']].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? 'on' : ''}">${l}</button>`).join('')}</div>
       <div id="list"></div></div>
       <button class="fab" id="newBeat" aria-label="New beat"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>`;
     wrap = $('.bookview', main);
@@ -173,6 +175,7 @@ function renderBook(main, fresh) {
   function renderList() {
     const list = $('#list', main); if (!list) return;
     const q = S.q.trim().toLowerCase();
+    if (S.filter === 'critical') { list.innerHTML = criticalList(q); list.onclick = e => { const r = e.target.closest('[data-open]'); if (r) openTarget(JSON.parse(r.dataset.open)); }; return; }
     let beats = S.filter === 'retired' ? book.allBeats().filter(b => b.deleted).sort((a, b) => a.title.localeCompare(b.title)) : book.order();
     if (S.filter === 'adjust') beats = beats.filter(b => b.adjust.trim());
     if (S.filter === 'empty') beats = beats.filter(b => !b.beat.trim());
@@ -187,7 +190,7 @@ function renderBook(main, fresh) {
       const words = wordCount(b.beat); totalWords += words;
       const tags = (pos?.tags || []).map(t => topics.get(t)).filter(Boolean);
       html += `<button class="beatrow ${S.openId === b.id ? 'on' : ''}" data-id="${b.id}" style="--lane:${laneColor(board, pos)}">
-        <div class="t">${esc(b.title)}${b.conflict ? '<em class="badge bad">Needs choice</em>' : ''}${b.adjust.trim() ? '<em class="badge adj">Adjust</em>' : ''}${b.dirty ? '<i class="dot" title="Not synced yet"></i>' : ''}</div>
+        <div class="t">${esc(b.title)}${(n => n ? `<em class="badge crit" title="Critical details">★ ${n}</em>` : '')(['synopsis', 'beat', 'notes'].reduce((k, f) => k + findCritical(b[f]).length, 0))}${b.conflict ? '<em class="badge bad">Needs choice</em>' : ''}${b.adjust.trim() ? '<em class="badge adj">Adjust</em>' : ''}${b.dirty ? '<i class="dot" title="Not synced yet"></i>' : ''}</div>
         ${b.synopsis ? `<div class="s">${esc(b.synopsis)}</div>` : ''}
         <div class="m">${pos ? esc(laneOf(board, pos)?.name || '') : ''}${tags.map(t => ` · <span style="color:${t.color}">${esc(t.name)}</span>`).join('')}${words ? ` · ${words.toLocaleString()} words` : ' · <span class="muted">empty</span>'}</div>
       </button>`;
@@ -204,6 +207,7 @@ const TABS = [['beat', 'Beat'], ['synopsis', 'Synopsis'], ['adjust', 'Claude adj
 
 function openBeat(id, focusTitle = false) {
   const b = book.beat(id); if (!b) return;
+  finishTitle();
   S.openId = id; S.openFile = null;
   const ed = $('#editor'), wasOpen = !ed.hidden; ed.hidden = false; ed.dataset.kind = 'beat';
   document.body.classList.add('editing');
@@ -218,19 +222,23 @@ function openBeat(id, focusTitle = false) {
     <div class="edmeta" id="edMeta"></div>
     <div class="conflict" id="edConflict" hidden></div>
     <div class="edtabs" id="edTabs">${TABS.map(([k, l]) => `<button data-tab="${k}" class="${S.tab === k ? 'on' : ''} ${k === 'adjust' ? 'adj' : ''}">${l}<i></i></button>`).join('')}</div>
-    <div class="edbody">${TABS.map(([k]) => `<textarea data-field="${k}" class="${k === 'beat' ? 'prose' : ''} ${k === 'adjust' ? 'adjust' : ''}" ${S.tab === k ? '' : 'hidden'} spellcheck="true" placeholder="${{ beat: 'Write the beat…', synopsis: 'One or two sentences. The first works alone as a one-liner.', adjust: 'Instructions for Claude (optional)', notes: 'Notes, earlier versions, finished adjusts…' }[k]}"></textarea>`).join('')}</div>
+    <div class="edbody">${TABS.map(([k]) => { const cls = `${k === 'beat' ? 'prose' : ''} ${k === 'adjust' ? 'adjust' : ''}`; return `<textarea data-field="${k}" class="${cls}" ${S.tab === k ? '' : 'hidden'} spellcheck="true" placeholder="${{ beat: 'Write the beat…', synopsis: 'One or two sentences. The first works alone as a one-liner.', adjust: 'Instructions for Claude (optional)', notes: 'Notes, earlier versions, finished adjusts…' }[k]}"></textarea><div class="hl ${cls}" aria-hidden="true"></div>`; }).join('')}<div class="ac" id="ac" hidden></div></div>
+    <div class="edlinks" id="edLinks"></div>
     <div class="edfoot"><span id="edWords"></span><span class="efs"><button data-efs="-1" aria-label="Smaller text">A−</button><span id="efsv"></span><button data-efs="1" aria-label="Larger text">A+</button></span><span id="edSaved"></span></div>`;
   applyEfs(); ed.querySelectorAll('[data-efs]').forEach(b => b.onclick = () => applyEfs(+b.dataset.efs));
   for (const ta of ed.querySelectorAll('textarea')) {
     ta.value = b[ta.dataset.field] || '';
     ta.addEventListener('input', () => { book.edit(id, { [ta.dataset.field]: ta.value }); footer(); });
+    attachRich(ta, { kind: 'beat', id });
   }
+  S.origTitle = b.title;
   $('#edTitle').addEventListener('input', e => book.edit(id, { title: e.target.value }));
+  $('#edTitle').addEventListener('change', finishTitle);
   $('#edBack').onclick = closeEditor;
   $('#edMore').onclick = () => beatMenu(id);
   $('#edFull').onclick = () => document.body.classList.toggle('edfull');
-  $('#edTabs').onclick = e => { const t = e.target.closest('[data-tab]'); if (!t) return; S.tab = t.dataset.tab; ed.querySelectorAll('[data-tab]').forEach(x => x.classList.toggle('on', x === t)); ed.querySelectorAll('textarea').forEach(x => x.hidden = x.dataset.field !== S.tab); footer(); };
-  editorMeta(); footer(); conflictBanner();
+  $('#edTabs').onclick = e => { const t = e.target.closest('[data-tab]'); if (!t) return; S.tab = t.dataset.tab; ed.querySelectorAll('[data-tab]').forEach(x => x.classList.toggle('on', x === t)); ed.querySelectorAll('textarea').forEach(x => x.hidden = x.dataset.field !== S.tab); footer(); linkStrip(); };
+  editorMeta(); footer(); conflictBanner(); linkStrip();
   if (focusTitle) { const t = $('#edTitle'); t.focus(); t.select(); }
   renderMain();
   history[wasOpen ? 'replaceState' : 'pushState']({ beat: id }, '');
@@ -240,6 +248,7 @@ addEventListener('popstate', () => { if (!$('#editor').hidden) closeEditor(true)
 
 function closeEditor(fromPop) {
   const ed = $('#editor'); if (ed.hidden) return;
+  finishTitle();
   ed.hidden = true; ed.innerHTML = ''; document.body.classList.remove('editing', 'edfull');
   S.openId = null; S.openFile = null;
   book?.pushNow();
@@ -275,6 +284,200 @@ function conflictBanner() {
   el.querySelectorAll('[data-c]').forEach(x => x.onclick = () => { book.resolve(S.openId, field, x.dataset.c); syncEditor({}); conflictBanner(); });
 }
 
+// ---------------- [[links]] and ==critical details== ----------------
+// Link targets: live beats by title, notes and other files by name. "notes/Name" picks a note when a beat has the same title.
+function targets() {
+  if (S.targets) return S.targets;
+  const byName = new Map(), byPath = new Map(), list = [];
+  for (const f of book.allFiles()) {
+    const t = { kind: 'file', id: f.path, label: fileName(f.path), path: f.path.replace(/\.(md|txt)$/i, '') };
+    byPath.set(t.path.toLowerCase(), t); if (!byName.has(t.label.toLowerCase())) byName.set(t.label.toLowerCase(), t); list.push(t);
+  }
+  for (const b of book.allBeats()) if (!b.deleted && b.title.trim()) {
+    const t = { kind: 'beat', id: b.id, label: b.title.trim() };
+    const clash = byName.get(t.label.toLowerCase());
+    if (clash?.kind === 'file') clash.insert = clash.path;   // the note must then be linked by its path
+    byName.set(t.label.toLowerCase(), t); list.push(t);
+  }
+  return (S.targets = { byName, byPath, list });
+}
+function resolveLink(target) {
+  const t = targets(), k = String(target || '').trim().toLowerCase();
+  return k.includes('/') ? t.byPath.get(k) : t.byName.get(k);
+}
+function openTarget(t) { if (!t) return; if (t.kind === 'beat') openBeat(t.id); else openFile(t.id); }
+
+// Everything that links to a beat or file.
+function backlinks(kind, id) {
+  const out = [], seen = new Set();
+  const check = (src, text) => { for (const l of findLinks(text)) { const r = resolveLink(l.target); if (r && r.kind === kind && r.id === id && !seen.has(src.kind + src.id)) { seen.add(src.kind + src.id); out.push(src); } } };
+  for (const b of book.allBeats()) if (!b.deleted) for (const f of ['synopsis', 'beat', 'notes', 'adjust']) check({ kind: 'beat', id: b.id, label: b.title }, b[f]);
+  for (const f of book.allFiles()) check({ kind: 'file', id: f.path, label: fileName(f.path) }, f.content);
+  return out.filter(s => !(s.kind === kind && s.id === id));
+}
+
+// The backdrop paints highlights exactly under the textarea's own text (text itself stays native and editable).
+function markup(text) {
+  const marks = [];
+  for (const m of text.matchAll(CRIT_RE)) marks.push([m.index, m.index + m[0].length, 'crit']);
+  for (const m of text.matchAll(LINK_RE)) marks.push([m.index, m.index + m[0].length, resolveLink(parseLink(m[1]).target) ? 'wl' : 'wl broken']);
+  if (!marks.length) return esc(text);
+  const cuts = [...new Set([0, text.length, ...marks.flatMap(m => [m[0], m[1]])])].sort((x, y) => x - y);
+  let out = '';
+  for (let i = 0; i < cuts.length - 1; i++) {
+    const s = cuts[i], e = cuts[i + 1], cls = marks.filter(m => m[0] <= s && m[1] >= e).map(m => m[2]).join(' ');
+    out += cls ? `<span class="${cls}">${esc(text.slice(s, e))}</span>` : esc(text.slice(s, e));
+  }
+  return out;
+}
+
+function attachRich(ta, owner) {
+  const hl = ta.nextElementSibling;
+  const render = () => { hl.innerHTML = markup(ta.value) + '<br>'; hl.scrollTop = ta.scrollTop; };
+  ta._render = render; ta._owner = owner;
+  render();
+  ta.addEventListener('input', () => { render(); autocomplete(ta); });
+  ta.addEventListener('scroll', () => { hl.scrollTop = ta.scrollTop; });
+  const caret = () => { linkStrip(); autocomplete(ta); };
+  ta.addEventListener('click', caret); ta.addEventListener('keyup', e => { if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(e.key) || $('#ac').hidden) caret(); });
+  ta.addEventListener('keydown', e => acKey(e, ta));
+  ta.addEventListener('blur', () => setTimeout(() => { if (!$('#ac')?.matches(':hover')) hideAc(); }, 150));
+}
+
+function activeTa() { return $('#editor textarea:not([hidden])'); }
+function linkAtCaret(ta) {
+  const p = ta.selectionStart;
+  for (const l of findLinks(ta.value)) if (p > l.index && p < l.index + l.length) return l;
+  return null;
+}
+
+// The strip under the text: Critical / Link buttons, the link under the caret, and "Linked from".
+function linkStrip() {
+  const el = $('#edLinks'), ta = activeTa(); if (!el || !ta) return;
+  const owner = ta._owner, here = linkAtCaret(ta), target = here && resolveLink(here.target);
+  const back = backlinks(owner.kind, owner.id);
+  el.innerHTML = `<button class="chip crit" id="mkCrit" title="Mark the selection as a critical detail (==…==)">★ Critical</button>
+    <button class="chip" id="mkLink" title="Link to a beat or note ([[…]])">[[ Link</button>
+    ${here ? (target ? `<button class="chip go" id="goLink">Open “${esc(target.label)}” ›</button>` : `<span class="chip missing">No beat or note called “${esc(here.target)}”</span>`) : ''}
+    <button class="chip" id="backLinks" ${back.length ? '' : 'disabled'}>Linked from · ${back.length}</button>`;
+  $('#mkCrit').onmousedown = $('#mkLink').onmousedown = e => e.preventDefault();   // keep the selection
+  $('#mkCrit').onclick = () => toggleCritical(activeTa());
+  $('#mkLink').onclick = () => insertLink(activeTa());
+  $('#goLink')?.addEventListener('click', () => openTarget(target));
+  $('#backLinks').onclick = () => sheet(`<h3>Linked from</h3><div class="list">${back.map(s => `<button class="item" data-k="${s.kind}" data-i="${esc(s.id)}">${s.kind === 'beat' ? '▤' : '✎'} ${esc(s.label)}</button>`).join('')}</div><button class="btn" data-close>Close</button>`,
+    (sh, close) => sh.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { close(); openTarget({ kind: b.dataset.k, id: b.dataset.i }); }));
+}
+
+function editTa(ta, value, selStart, selEnd) {
+  ta.focus(); ta.value = value; ta.setSelectionRange(selStart, selEnd ?? selStart);
+  ta.dispatchEvent(new Event('input')); linkStrip();
+}
+function toggleCritical(ta) {
+  if (!ta) return;
+  const v = ta.value; let s = ta.selectionStart, e = ta.selectionEnd;
+  // Already inside a critical detail: remove the marks.
+  for (const c of findCritical(v)) if (s >= c.index && e <= c.index + c.length) return editTa(ta, v.slice(0, c.index) + c.text + v.slice(c.index + c.length), Math.max(c.index, s - 2), Math.max(c.index, e - 2));
+  if (s === e) { // no selection: mark the sentence around the caret
+    const before = v.slice(0, s), after = v.slice(s);
+    s = Math.max(before.lastIndexOf('\n'), before.search(/[.!?]\s+[^.!?]*$/) + 1, 0); if (/\s/.test(v[s])) s++;
+    const m = after.search(/[.!?](\s|$)|\n/); e = m < 0 ? v.length : s + (before.length - s) + m + (v[before.length + m] === '\n' ? 0 : 1);
+    while (/\s/.test(v[s]) && s < e) s++;
+  }
+  const inner = v.slice(s, e).replace(/^\s+|\s+$/g, ''); if (!inner) return;
+  const lead = v.slice(s, e).length - v.slice(s, e).trimStart().length;
+  s += lead; e = s + inner.length;
+  editTa(ta, v.slice(0, s) + '==' + inner + '==' + v.slice(e), s, e + 4);
+}
+function insertLink(ta) {
+  if (!ta) return;
+  const v = ta.value, s = ta.selectionStart, e = ta.selectionEnd, sel = v.slice(s, e);
+  if (sel) return editTa(ta, v.slice(0, s) + '[[' + sel + ']]' + v.slice(e), s + 2, s + 2 + sel.length);
+  editTa(ta, v.slice(0, s) + '[[' + v.slice(e), s + 2);
+  autocomplete(ta);
+}
+
+// [[ autocomplete
+let acState = null;
+function hideAc() { const ac = $('#ac'); if (ac) { ac.hidden = true; ac.innerHTML = ''; } acState = null; }
+function autocomplete(ta) {
+  const ac = $('#ac'); if (!ac) return;
+  const p = ta.selectionStart, before = ta.value.slice(0, p);
+  const m = /\[\[([^\[\]\n|]*)$/.exec(before);
+  if (!m || ta.selectionStart !== ta.selectionEnd) return hideAc();
+  const q = m[1].toLowerCase().trim(), own = ta._owner;
+  const items = targets().list.filter(t => !(t.kind === own.kind && t.id === own.id))
+    .map(t => ({ t, score: !q ? 1 : t.label.toLowerCase().startsWith(q) ? 3 : t.label.toLowerCase().includes(q) ? 2 : (t.path || '').toLowerCase().includes(q) ? 1 : 0 }))
+    .filter(x => x.score).sort((a, b) => b.score - a.score || (a.t.kind === 'beat' ? -1 : 1) || a.t.label.localeCompare(b.t.label)).slice(0, 8).map(x => x.t);
+  if (!items.length) return hideAc();
+  acState = { ta, items, sel: 0, start: p - m[1].length };
+  ac.innerHTML = items.map((t, i) => `<button class="${i === 0 ? 'on' : ''}" data-i="${i}"><b>${t.kind === 'beat' ? 'Beat' : 'Note'}</b>${esc(t.label)}${t.insert ? ` <small>${esc(t.insert)}</small>` : ''}</button>`).join('');
+  ac.hidden = false;
+  ac.querySelectorAll('button').forEach(b => { b.onmousedown = e => e.preventDefault(); b.onclick = () => acPick(+b.dataset.i); });
+}
+function acPick(i) {
+  const st = acState; if (!st) return;
+  const t = st.items[i], ta = st.ta, v = ta.value, p = ta.selectionStart;
+  const name = t.insert || t.label, close = v.slice(p).startsWith(']]') ? '' : ']]';
+  hideAc();
+  editTa(ta, v.slice(0, st.start) + name + close + v.slice(p), st.start + name.length + 2);
+}
+function acKey(e, ta) {
+  if (!acState || acState.ta !== ta) return;
+  const ac = $('#ac'), n = acState.items.length;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); acState.sel = (acState.sel + (e.key === 'ArrowDown' ? 1 : n - 1)) % n; ac.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', i === acState.sel)); }
+  else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); acPick(acState.sel); }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideAc(); }
+}
+
+// Renaming a beat updates every [[link]] to it, across beats and notes.
+function finishTitle() {
+  const b = S.openId && book.beat(S.openId), from = S.origTitle;
+  if (!b || !from || !b.title.trim() || b.title.trim() === from.trim()) { if (b) S.origTitle = b.title; return; }
+  let n = 0;
+  for (const o of book.allBeats()) {
+    const ch = {};
+    for (const f of ['synopsis', 'beat', 'notes', 'adjust']) { const nv = renameLinks(o[f], from, b.title.trim()); if (nv !== o[f]) ch[f] = nv; }
+    if (Object.keys(ch).length) { book.edit(o.id, ch); n++; }
+  }
+  for (const f of book.allFiles()) { const nv = renameLinks(f.content, from, b.title.trim()); if (nv !== f.content) { book.editFile(f.path, nv); n++; } }
+  S.origTitle = b.title;
+  if (n) toast(`Updated links in ${n} place${n > 1 ? 's' : ''}`);
+}
+
+// Book → Critical: every critical detail in book order, with where it points.
+function criticalList(q) {
+  let html = '', count = 0;
+  const row = (src, label, c) => {
+    if (q && !(c.text + ' ' + label).toLowerCase().includes(q)) return '';
+    count++;
+    const links = c.links.map(t => resolveLink(t)).filter(Boolean);
+    return `<button class="critrow" data-open='${esc(JSON.stringify(src))}'><div class="d"><mark>${esc(c.text.replace(LINK_RE, (_, i) => { const l = parseLink(i); return l.alias || l.target; }))}</mark></div>
+      <div class="m">${esc(label)}${links.length ? ' → ' + links.map(l => esc(l.label)).join(', ') : ''}</div></button>`;
+  };
+  for (const b of book.order()) {
+    const cs = ['synopsis', 'beat', 'notes'].flatMap(f => findCritical(b[f]));
+    const rows = cs.map(c => row({ kind: 'beat', id: b.id }, b.title, c)).join('');
+    if (rows) html += `<h2 class="act"><span>${esc(b.title)}</span></h2>` + rows;
+  }
+  let fr = '';
+  for (const f of book.allFiles()) fr += findCritical(f.content).map(c => row({ kind: 'file', id: f.path }, fileName(f.path), c)).join('');
+  if (fr) html += `<h2 class="act"><span>Notes</span></h2>` + fr;
+  return count ? html + `<p class="foot muted">${count} critical detail${count > 1 ? 's' : ''}</p>`
+    : `<div class="empty"><p>No critical details yet.</p><p class="muted">In any beat or note, select a detail and tap <b>★ Critical</b>, or type ==like this==. Add a [[link]] inside it to say where it pays off.</p></div>`;
+}
+
+// Board: faint dashed lines for [[links]] between beats.
+function wikiLines(board, beats, center) {
+  let out = '';
+  const seen = new Set();
+  for (const b of beats) for (const f of ['synopsis', 'beat', 'notes']) for (const l of findLinks(b[f])) {
+    const t = resolveLink(l.target); if (!t || t.kind !== 'beat' || t.id === b.id) continue;
+    const k = b.id + '>' + t.id; if (seen.has(k)) continue; seen.add(k);
+    const a = center(b.id), c = center(t.id); if (a && c) out += `<line class="wiki" x1="${a[0]}" y1="${a[1]}" x2="${c[0]}" y2="${c[1]}"/>`;
+  }
+  return out;
+}
+
 // Editor text size: a reading preference, kept per device.
 function applyEfs(step = 0) {
   const v = Math.round(Math.max(0.6, Math.min(1.8, ls.get('quire-efs', 1) + step * 0.1)) * 10) / 10;
@@ -307,7 +510,7 @@ function setKeepingCaret(ta, v) {
   const old = ta.value, s = ta.selectionStart, e = ta.selectionEnd, top = ta.scrollTop;
   let p = 0; while (p < old.length && p < v.length && old[p] === v[p]) p++;
   const d = v.length - old.length;
-  ta.value = v;
+  ta.value = v; ta._render?.();
   if (document.activeElement === ta) ta.setSelectionRange(s > p ? s + d : s, e > p ? e + d : e);
   ta.scrollTop = top;
 }
@@ -387,14 +590,14 @@ function renderBoard(main, fresh) {
   const touchy = matchMedia('(pointer: coarse)').matches;
   main.innerHTML = `<div class="boardtools">
       <button class="btn" data-z="-" aria-label="Zoom out">−</button><button class="btn" data-z="+" aria-label="Zoom in">+</button><button class="btn" data-z="fit">Whole book</button>
-      <span class="sep"></span><button class="btn" data-ts="-1" aria-label="Smaller card text">A−</button><button class="btn" data-ts="1" aria-label="Larger card text">A+</button><span class="muted tsv">${Math.round(ts * 100)}%</span>
+      <button class="btn ${S.showWiki ? 'on' : ''}" data-wiki title="Show [[links]] between beats">Links</button><span class="sep"></span><button class="btn" data-ts="-1" aria-label="Smaller card text">A−</button><button class="btn" data-ts="1" aria-label="Larger card text">A+</button><span class="muted tsv">${Math.round(ts * 100)}%</span>
       <span class="muted hint">${S.linkFrom ? '' : touchy ? 'Hold a card to drag it · hold for more' : 'Drag cards to move · right-click for more'}</span></div>
     ${S.linkFrom ? `<div class="linkbar">Now tap the beat the arrow should point to. <button class="btn" id="linkCancel">Cancel</button></div>` : ''}
   <div class="boardwrap ${S.linkFrom ? 'linking' : ''}"><div class="sizer" style="width:${W * z}px;height:${H * z}px"><div class="canvas ${far ? 'far' : ''} ${z < 0.25 ? 'tiny' : ''}" style="width:${W}px;height:${H}px;transform:scale(${z});--ts:${ts};--iz:${(1 / z).toFixed(3)}">
     ${lanes.map((l, n) => `<div class="lane" data-lane="${n}" style="top:${geom[n].top}px;height:${geom[n].h}px;--c:${l.color}"><span>${esc(l.name)}</span><i class="lanegrip" data-grip="${n}" title="Drag to change this stream's height"></i></div>`).join('')}
     ${(board.acts || []).map(a => `<div class="actline" data-aid="${esc(a.id)}" style="left:${Math.max(0, a.x - 16)}px"><b>${esc(a.name)}</b><small>${esc(a.sub || '')}</small></div>`).join('')}
     ${(board.days || []).map(d => `<div class="dayline" data-did="${esc(d.id)}" style="left:${d.x - 8}px"><span>${esc(d.date || (d.days != null ? `+${d.days} day${d.days == 1 ? '' : 's'}` : ''))}</span></div>`).join('')}
-    <svg class="links" width="${W}" height="${H}">${(board.links || []).map(l => { const a = center(l.from), b = center(l.to); return a && b ? `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" marker-end="url(#ah)"/>` : ''; }).join('')}<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z"/></marker></defs></svg>
+    <svg class="links" width="${W}" height="${H}">${S.showWiki ? wikiLines(board, beats, center) : ''}${(board.links || []).map(l => { const a = center(l.from), b = center(l.to); return a && b ? `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" marker-end="url(#ah)"/>` : ''; }).join('')}<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z"/></marker></defs></svg>
     ${(board.notes || []).map(n => `<div class="sticky" data-nid="${esc(n.id)}" style="left:${n.x}px;top:${n.y}px;background:${n.color || '#F6E7A6'}">${esc(n.text)}</div>`).join('')}
     ${beats.map(b => { const p = board.beats?.[b.id]; if (!p) return ''; const lane = laneOf(board, p);
       return `<div title="${esc(b.title)}" class="card ${b.dirty ? 'dirty' : ''} ${S.openId === b.id ? 'on' : ''} ${S.linkFrom === b.id ? 'from' : ''}" data-id="${b.id}" style="left:${p.x}px;top:${p.y}px;--lane:${lane?.color || '#888'}">
@@ -408,6 +611,7 @@ function renderBoard(main, fresh) {
     S.zoom = k === 'fit' ? Math.max(0.12, Math.min(1, (wrap.clientWidth - 20) / W)) : Math.max(0.12, Math.min(1.6, S.zoom * (k === '+' ? 1.25 : 0.8)));
     ls.set('quire-zoom', S.zoom); renderBoard(main, true);
   });
+  $('[data-wiki]', main).onclick = () => { S.showWiki = !S.showWiki; ls.set('quire-wiki', S.showWiki); renderBoard(main); };
   main.querySelectorAll('.boardtools [data-ts]').forEach(b => b.onclick = () => setTextScale(+b.dataset.ts));
   $('#linkCancel', main)?.addEventListener('click', () => { S.linkFrom = null; renderBoard(main); });
   boardInteract(wrap, canvas, main, z);
@@ -732,9 +936,13 @@ function openFile(path) {
   S.openFile = path; S.openId = null;
   const ed = $('#editor'), wasOpen = !ed.hidden; ed.hidden = false; ed.dataset.kind = 'file'; document.body.classList.add('editing');
   ed.innerHTML = `<div class="edhead"><button class="icon" id="edBack" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><div class="title static">${esc(path)}</div><button class="icon" id="edDel" aria-label="Delete note"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg></button></div>
-    <div class="edbody"><textarea class="prose" spellcheck="true"></textarea></div><div class="edfoot"><span></span><span id="edSaved"></span></div>`;
+    <div class="edbody"><textarea class="prose" spellcheck="true"></textarea><div class="hl prose" aria-hidden="true"></div><div class="ac" id="ac" hidden></div></div>
+    <div class="edlinks" id="edLinks"></div>
+    <div class="edfoot"><span></span><span class="efs"><button data-efs="-1" aria-label="Smaller text">A−</button><span id="efsv"></span><button data-efs="1" aria-label="Larger text">A+</button></span><span id="edSaved"></span></div>`;
   const ta = $('textarea', ed); ta.value = f.content || '';
   ta.oninput = () => book.editFile(path, ta.value);
+  applyEfs(); ed.querySelectorAll('[data-efs]').forEach(b => b.onclick = () => applyEfs(+b.dataset.efs));
+  attachRich(ta, { kind: 'file', id: path }); linkStrip();
   $('#edBack').onclick = closeEditor;
   $('#edDel').onclick = () => { if (confirmTwice($('#edDel'))) { book.editFile(path, f.content || '', true); closeEditor(); toast('Note removed. It stays in the GitHub history.'); } };
   history[wasOpen ? 'replaceState' : 'pushState']({ beat: path }, '');

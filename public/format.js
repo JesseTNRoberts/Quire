@@ -251,7 +251,7 @@ export function manuscript(project, { include = 'beat', headings = true } = {}) 
     if (headings && act && act.id !== lastAct) { out += `## ${act.name}\n\n`; lastAct = act.id; }
     const text = include === 'synopsis' ? b.synopsis : b.beat;
     if (headings) out += `### ${b.title}\n\n`;
-    if ((text || '').trim()) out += text.trim() + '\n\n';
+    if ((text || '').trim()) out += plainText(text).trim() + '\n\n';
   }
   return out;
 }
@@ -351,3 +351,40 @@ export function mergeBoard(base = {}, local = {}, remote = {}) {
   }
   return out;
 }
+
+// ---------- wikilinks and critical details ----------
+// [[Target]] or [[Target|shown text]] links to a beat (by title) or a note (by name).
+// ==text== marks a critical detail (one paragraph at most).
+
+export const LINK_RE = /\[\[([^\[\]\n]+?)\]\]/g;
+export const CRIT_RE = /==([^\s=](?:[^\n]*?[^\s=])?)==/g;
+
+export function parseLink(inner) {
+  const [t, alias] = inner.split('|');
+  return { target: t.split('#')[0].trim(), alias: alias?.trim() || null };
+}
+export function findLinks(text) {
+  const out = [];
+  for (const m of String(text || '').matchAll(LINK_RE)) out.push({ ...parseLink(m[1]), index: m.index, length: m[0].length });
+  return out;
+}
+export function findCritical(text) {
+  const out = [];
+  for (const m of String(text || '').matchAll(CRIT_RE)) out.push({ text: m[1], index: m.index, length: m[0].length, links: findLinks(m[1]).map(l => l.target) });
+  return out;
+}
+// Rewrites links to `from` so they point to `to`, keeping any alias or #section. Case-insensitive.
+export function renameLinks(text, from, to) {
+  const f = from.trim().toLowerCase();
+  return String(text || '').replace(LINK_RE, (all, inner) => {
+    const bar = inner.indexOf('|'), head = bar < 0 ? inner : inner.slice(0, bar), rest = bar < 0 ? '' : inner.slice(bar);
+    const hash = head.indexOf('#'), name = hash < 0 ? head : head.slice(0, hash), sec = hash < 0 ? '' : head.slice(hash);
+    return name.trim().toLowerCase() === f ? `[[${to}${sec}${rest}]]` : all;
+  });
+}
+// Text for readers: links become their words, highlights become plain.
+export function plainText(s) {
+  return String(s || '').replace(LINK_RE, (_, inner) => { const l = parseLink(inner); return l.alias || l.target; }).replace(CRIT_RE, '$1');
+}
+// Short display name for a note file: "notes/Abby Orne.md" -> "Abby Orne".
+export function fileName(path) { return path.split('/').pop().replace(/\.(md|txt)$/i, ''); }

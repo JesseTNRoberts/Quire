@@ -22,3 +22,14 @@ assert.deepEqual(F.parseScrivName('025 The Driftwood [6].txt'), {title:'The Drif
 assert.deepEqual(F.parseScrivName('31 TO DELETE - Old bit [12].txt'), {title:'Old bit', sid:'12', deleted:true});
 assert.deepEqual(F.parseScrivName('Brand new.txt'), {title:'Brand new', sid:null, deleted:false});
 console.log('format tests ok');
+// wikilinks + critical
+{
+  const t = 'Abby has ==the dinghy key in her coat== see [[The dinghy key]] and [[Abby Orne|Abby]].';
+  assert.deepEqual(F.findLinks(t).map(l => [l.target, l.alias]), [['The dinghy key', null], ['Abby Orne', 'Abby']]);
+  assert.deepEqual(F.findCritical(t).map(c => c.text), ['the dinghy key in her coat']);
+  assert.equal(F.renameLinks(t, 'the DINGHY key', 'The key'), t.replace('[[The dinghy key]]', '[[The key]]'));
+  assert.equal(F.renameLinks('[[Abby Orne#past|her]]', 'abby orne', 'Abigail'), '[[Abigail#past|her]]');
+  assert.equal(F.plainText(t), 'Abby has the dinghy key in her coat see The dinghy key and Abby.');
+  assert.deepEqual(F.findCritical('a == b == c').map(c=>c.text), []);
+  console.log('wikilink tests ok');
+}

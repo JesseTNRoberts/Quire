@@ -92,10 +92,17 @@ h2.act small { font-weight: 500; letter-spacing: 0; text-transform: none; color:
 .edtabs button.has i { background: var(--muted); }
 .edtabs button.adj.has { background: var(--adj); color: var(--adj-ink); border-radius: 8px 8px 0 0; }
 .edtabs button.adj.has i { background: var(--adj-ink); }
-.edbody { flex: 1; display: flex; min-height: 0; }
-.edbody textarea { flex: 1; width: 100%; resize: none; border: 0; outline: none; background: transparent; padding: 18px 18px 40px; font: calc(16px * var(--efs, 1))/1.6 var(--ui); }
-.edbody textarea.prose { font: calc(18px * var(--efs, 1))/1.7 var(--prose); max-width: 46em; margin: 0 auto; padding-left: max(18px, calc((100% - 40em) / 2)); padding-right: max(18px, calc((100% - 40em) / 2)); }
-.edbody textarea.adjust { background: color-mix(in srgb, var(--adj) 45%, transparent); }
+.edbody { flex: 1; display: flex; min-height: 0; position: relative; }
+.edbody :is(textarea, .hl) { flex: 1; width: 100%; resize: none; border: 0; outline: none; background: transparent; padding: 18px 18px 40px; font: calc(16px * var(--efs, 1))/1.6 var(--ui); white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; scrollbar-gutter: stable; letter-spacing: normal; tab-size: 4; }
+.edbody textarea { position: relative; z-index: 1; overflow-y: auto; }
+/* The highlight layer sits exactly under the textarea and paints marks behind its text. */
+.edbody .hl { position: absolute; top: 0; bottom: 0; left: 0; right: 0; margin: 0 auto; z-index: 0; overflow: hidden; color: transparent; pointer-events: none; user-select: none; }
+.edbody textarea[hidden] + .hl { display: none; }
+.hl .crit { background: color-mix(in srgb, var(--accent) 24%, transparent); border-radius: 3px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+.hl .wl { background: color-mix(in srgb, #5B7DB1 16%, transparent); border-radius: 3px; box-shadow: inset 0 -2px #5B7DB1; }
+.hl .wl.broken { background: transparent; box-shadow: inset 0 -2px color-mix(in srgb, var(--bad) 70%, transparent); }
+.edbody :is(textarea, .hl).prose { font: calc(18px * var(--efs, 1))/1.7 var(--prose); max-width: 46em; margin: 0 auto; padding-left: max(18px, calc((100% - 40em) / 2)); padding-right: max(18px, calc((100% - 40em) / 2)); }
+.edbody .hl.adjust { background: color-mix(in srgb, var(--adj) 45%, transparent); }
 .efs { display: flex; align-items: center; gap: 4px; }
 .efs button { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 3px 9px; font-size: 13px; font-weight: 600; color: var(--ink2); }
 .efs span { min-width: 38px; text-align: center; }
@@ -262,7 +269,7 @@ p.big { font-size: 17px; }
   body.editing .fab { right: calc(56% + 24px); }
   .beatrow:hover { border-color: color-mix(in srgb, var(--ink2) 45%, var(--line)); }
   .card:hover { box-shadow: 0 4px 14px rgba(0,0,0,.1); }
-  .edbody textarea.prose { font-size: calc(19px * var(--efs, 1)); }
+  .edbody :is(textarea, .hl).prose { font-size: calc(19px * var(--efs, 1)); }
 }
 
 /* phone: hide labels we don't need, keep the editor full-screen */
@@ -272,3 +279,22 @@ p.big { font-size: 17px; }
   .grid { grid-template-columns: 1fr; } .span2 { grid-column: auto; }
   .cmp { grid-template-columns: 1fr; }
 }
+
+/* ---------- links & critical details ---------- */
+.edlinks { display: flex; gap: 6px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; flex: none; }
+.chip { flex: none; border: 1px solid var(--line); background: var(--card); border-radius: 99px; padding: 5px 11px; font-size: 13px; font-weight: 600; color: var(--ink2); white-space: nowrap; }
+.chip:disabled { opacity: .5; }
+.chip.crit { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.chip.go { background: color-mix(in srgb, #5B7DB1 14%, var(--card)); border-color: #5B7DB1; color: #3B5F95; }
+.chip.missing { color: var(--bad); border-style: dashed; font-weight: 500; }
+.ac { position: absolute; left: 12px; right: 12px; bottom: 8px; z-index: 5; max-width: 420px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 28px rgba(0,0,0,.18); padding: 5px; display: flex; flex-direction: column; }
+.ac button { display: flex; gap: 10px; align-items: baseline; text-align: left; border: 0; background: none; padding: 9px 10px; border-radius: 8px; font-size: 15px; color: var(--ink); }
+.ac button b { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); min-width: 34px; }
+.ac button small { color: var(--muted); font-size: 12px; }
+.ac button.on, .ac button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.badge.crit { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.critrow { display: block; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--card); border-radius: var(--r); padding: 11px 14px; margin: 0 0 8px; }
+.critrow mark { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; border-radius: 3px; padding: 0 2px; font-family: var(--prose); font-size: 16px; line-height: 1.5; }
+.critrow .m { font-size: 12.5px; color: var(--muted); margin-top: 5px; }
+.links line.wiki { stroke: #5B7DB1; stroke-dasharray: calc(6px * var(--iz)) calc(5px * var(--iz)); opacity: .55; }
+.btn.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
