@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node test/format.test.mjs && node test/migrate.test.mjs",
+    "test": "node test/format.test.mjs && node test/migrate.test.mjs && node test/auth.test.mjs",
     "migrate": "node scripts/migrate.mjs"
   },
   "license": "ISC",
