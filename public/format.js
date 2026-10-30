@@ -76,10 +76,24 @@ export function actOf(board, pos) {
   for (const a of acts) if (a.x <= pos.x + CARD.w / 2) act = a;
   return act;
 }
+// Streams can have their own heights (lane.h, default 240). Returns [{top, h}] per stream.
+export const MIN_LANE_H = 180;
+export function laneGeom(board) {
+  let top = CARD.laneTop;
+  return (board.lanes || []).map(l => { const h = Math.max(MIN_LANE_H, l.h || CARD.laneH); const g = { top, h }; top += h; return g; });
+}
+export function laneIndexAt(board, y) {
+  const g = laneGeom(board);
+  for (let i = 0; i < g.length; i++) if (y < g[i].top + g[i].h) return i;
+  return Math.max(0, g.length - 1);
+}
+// Keep a card inside its stream: snapped near the top when the stream is one card tall, free when it is taller.
+export function fitInLane(board, n, y) {
+  const g = laneGeom(board)[n] || { top: CARD.laneTop, h: CARD.laneH };
+  return Math.round(Math.max(g.top + 45, Math.min(y, g.top + g.h - CARD.h - 20)));
+}
 export function laneOf(board, pos) {
-  const lanes = board.lanes || [];
-  const n = Math.floor((pos.y + CARD.h / 2 - CARD.laneTop) / CARD.laneH);
-  return lanes[Math.max(0, Math.min(lanes.length - 1, n))];
+  return (board.lanes || [])[laneIndexAt(board, pos.y + CARD.h / 2)];
 }
 
 // Returns live beats in book order: by act, then x, then y.
@@ -106,7 +120,7 @@ export function placeNew(board, id, after) {
   }
   let maxX = 40 - CARD.step;
   for (const p of Object.values(board.beats)) maxX = Math.max(maxX, p.x);
-  board.beats[id] = { x: maxX + CARD.step, y: CARD.laneTop + 45, tags: [] };
+  board.beats[id] = { x: maxX + CARD.step, y: (laneGeom(board)[0]?.top ?? CARD.laneTop) + 45, tags: [] };
 }
 
 export function shiftRight(board, fromX, dx) {

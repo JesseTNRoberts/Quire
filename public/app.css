@@ -102,33 +102,89 @@ h2.act small { font-weight: 500; letter-spacing: 0; text-transform: none; color:
 .cmp pre { white-space: pre-wrap; font: 13px/1.4 var(--prose); max-height: 30vh; overflow: auto; background: var(--card); padding: 8px; border-radius: 8px; margin: 4px 0 0; }
 .cmp h4 { margin: 0; font-size: 12px; }
 
-/* ---------- board ---------- */
-.boardtools { position: sticky; top: 0; left: 0; z-index: 3; display: flex; gap: 6px; align-items: center; padding: 8px 12px; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
-.boardtools .hint { font-size: 12.5px; margin-left: 6px; }
-.boardwrap { overflow: auto; height: calc(100% - 52px); touch-action: pan-x pan-y; }
+/* ---------- board ----------
+   --ts: the book's card text size (A− / A+).  --iz: 1 / zoom, so labels stay a readable size on screen at any zoom. */
+.boardtools { position: sticky; top: 0; left: 0; z-index: 3; display: flex; gap: 6px; align-items: center; padding: 8px 12px; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.boardtools .btn { flex: none; min-width: 40px; }
+.boardtools .sep { width: 1px; align-self: stretch; background: var(--line); margin: 2px 4px; flex: none; }
+.boardtools .tsv { font-size: 12.5px; min-width: 38px; flex: none; }
+.boardtools .hint { font-size: 12.5px; margin-left: 6px; white-space: nowrap; }
+.linkbar { padding: 8px 14px; background: color-mix(in srgb, var(--accent) 12%, var(--paper)); border-bottom: 1px solid var(--line); font-size: 14px; display: flex; gap: 10px; align-items: center; }
+.boardwrap { overflow: auto; height: calc(100% - 52px); touch-action: pan-x pan-y; background: var(--paper); }
+.boardwrap.linking .card { cursor: crosshair; }
 .sizer { position: relative; }
-.canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-.lane { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--line); background: color-mix(in srgb, var(--c) 5%, transparent); }
-.lane span { position: sticky; left: 8px; display: inline-block; margin: 8px; font: 700 15px var(--ui); color: var(--c); }
-.actline { position: absolute; top: 0; bottom: 0; border-left: 2px solid var(--ink2); padding: 14px 0 0 12px; opacity: .85; }
-.actline b { display: block; font-size: 24px; white-space: nowrap; }
-.actline small { color: var(--muted); font-size: 16px; white-space: nowrap; }
-.dayline { position: absolute; top: 76px; bottom: 0; border-left: 1px dotted var(--warn); }
-.dayline span { font-size: 13px; color: var(--warn); padding-left: 5px; white-space: nowrap; }
-.sticky { position: absolute; width: 200px; padding: 10px; font-size: 14px; border-radius: 4px; color: #3b3315; box-shadow: 0 2px 6px rgba(0,0,0,.12); }
-.links { position: absolute; left: 0; top: 0; pointer-events: none; }
-.links line { stroke: var(--ink2); stroke-width: 2; opacity: .5; }
+.canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; --ts: 1; --iz: 1; }
+.lane { position: absolute; left: 0; right: 0; border-top: 1px solid color-mix(in srgb, var(--c) 30%, transparent); background: color-mix(in srgb, var(--c) 6%, transparent); }
+.lane:nth-child(even) { background: color-mix(in srgb, var(--c) 9%, transparent); }
+.lane span { position: absolute; left: calc(8px * var(--iz)); top: calc(6px * var(--iz)); font: 700 calc(13px * var(--iz))/1 var(--ui); color: var(--c); white-space: nowrap; z-index: 4; background: color-mix(in srgb, var(--paper) 80%, transparent); padding: calc(2px * var(--iz)) calc(5px * var(--iz)); border-radius: calc(5px * var(--iz)); pointer-events: none; }
+.lanegrip { position: absolute; left: 0; right: 0; bottom: -6px; height: 12px; cursor: ns-resize; z-index: 2; touch-action: none; }
+.lanegrip::after { content: ""; position: absolute; left: 50%; top: 4px; width: calc(48px * min(var(--iz), 3)); height: calc(4px * min(var(--iz), 3)); margin-left: calc(-24px * min(var(--iz), 3)); border-radius: 99px; background: var(--c); opacity: 0; transition: opacity .15s; }
+.lane:hover .lanegrip::after, .lane.resizing .lanegrip::after { opacity: .7; }
+.lane.resizing { outline: 2px dashed var(--c); outline-offset: -2px; }
+@media (pointer: coarse) { .lanegrip { height: calc(28px * min(var(--iz), 3)); bottom: calc(-14px * min(var(--iz), 3)); } .lanegrip::after { opacity: .45; top: 45%; } }
+.actline { position: absolute; top: 0; bottom: 0; border-left: calc(2px * var(--iz)) solid var(--ink2); padding: calc(8px * var(--iz)) 0 0 calc(8px * var(--iz)); opacity: .85; z-index: 1; display: flex; align-items: baseline; gap: calc(6px * var(--iz)); white-space: nowrap; }
+.actline b { font-size: calc(17px * var(--iz)); line-height: 1; }
+.actline small { color: var(--muted); font-size: calc(12px * var(--iz)); }
+.dayline { position: absolute; top: calc(min(28px * var(--iz), 120px - 14px * var(--iz))); bottom: 0; border-left: calc(1.5px * var(--iz)) dotted var(--warn); z-index: 1; }
+.dayline span { font-size: calc(11px * var(--iz)); line-height: 1; color: var(--warn); padding-left: calc(4px * var(--iz)); white-space: nowrap; font-weight: 650; }
+.sticky { position: absolute; width: 200px; min-height: 60px; max-height: 160px; overflow: hidden; padding: 10px; font-size: calc(14px * var(--ts)); border-radius: 4px; color: #3b3315; box-shadow: 0 2px 6px rgba(0,0,0,.12); cursor: grab; user-select: none; -webkit-user-select: none; z-index: 2; white-space: pre-wrap; }
+.sticky:empty::before { content: "Double-click to write"; opacity: .5; }
+.sticky.lift { box-shadow: 0 12px 26px rgba(0,0,0,.2); z-index: 10; }
+.links { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 1; }
+.links line { stroke: var(--ink2); stroke-width: calc(1.6px * var(--iz)); opacity: .5; }
 .links path { fill: var(--ink2); stroke: none; }
-.card { position: absolute; width: 230px; height: 150px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 12px 10px 16px; overflow: hidden; cursor: grab; user-select: none; -webkit-user-select: none; touch-action: manipulation; box-shadow: 0 1px 3px rgba(0,0,0,.06); transition: box-shadow .15s, transform .15s; }
-.card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--lane); }
-.card.on { box-shadow: 0 0 0 3px var(--accent); }
+.card { position: absolute; width: 230px; height: 150px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 12px 10px 18px; overflow: hidden; cursor: grab; user-select: none; -webkit-user-select: none; touch-action: manipulation; box-shadow: 0 1px 3px rgba(0,0,0,.06); transition: box-shadow .15s, transform .15s; z-index: 3; display: flex; flex-direction: column; gap: 5px; }
+.card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: var(--lane); }
+.card.on { box-shadow: 0 0 0 calc(3px * min(var(--iz), 4)) var(--accent); }
+.card.from { box-shadow: 0 0 0 calc(3px * min(var(--iz), 4)) var(--ok); }
 .card.dirty::after { content: ""; position: absolute; right: 9px; top: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
 .card.lift { transform: scale(1.04) rotate(-1deg); box-shadow: 0 14px 30px rgba(0,0,0,.2); z-index: 10; cursor: grabbing; transition: none; }
-.card .ct { font-weight: 700; font-size: 15px; line-height: 1.25; }
-.card .cs { font: 14px/1.35 var(--prose); color: var(--ink2); margin-top: 5px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
-.card .cm { position: absolute; left: 16px; bottom: 9px; display: flex; gap: 4px; align-items: center; }
+.card .ct { font: 650 calc(17px * var(--ts))/1.2 var(--ui); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; flex: none; text-wrap: balance; }
+.card .cs { font: calc(12.5px * var(--ts))/1.4 var(--prose); color: var(--ink2); overflow: hidden; min-height: 0; flex: 1; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+.card .cm { position: absolute; left: 18px; bottom: 9px; display: flex; gap: 4px; align-items: center; }
 .card .cm i { width: 10px; height: 10px; border-radius: 3px; }
 .card .cm em { font-style: normal; font-size: 11px; font-weight: 700; background: var(--adj); color: var(--adj-ink); padding: 1px 6px; border-radius: 99px; }
+
+/* Zoomed out: cards become bold title tiles tinted by their stream, so the shape of the book reads at a glance. */
+.canvas.far .card { background: color-mix(in srgb, var(--lane) 16%, var(--card)); border: 2px solid color-mix(in srgb, var(--lane) 45%, transparent); padding: 12px 12px 12px 22px; justify-content: flex-start; box-shadow: none; }
+.canvas.far .card::before { width: 10px; }
+.canvas.far .card .cs { display: none; }
+.canvas.far .card .ct { font-size: max(calc(24px * var(--ts)), calc(9px * var(--iz))); line-height: 1.12; -webkit-line-clamp: 4; overflow-wrap: break-word; hyphens: auto; }
+.canvas.far .card .cm { bottom: 10px; }
+.canvas.far .card .cm i { width: 18px; height: 18px; border-radius: 5px; }
+.canvas.far .card .cm em { font-size: 0; width: 18px; height: 18px; padding: 0; border-radius: 50%; }
+.canvas.far .card.dirty::after { width: 18px; height: 18px; right: 12px; top: 12px; }
+.canvas.far .sticky { font-size: calc(22px * var(--ts)); line-height: 1.2; }
+/* Very far out: no text at all, just clean tiles in stream colours (hover shows the title). */
+.canvas.tiny .card { background: color-mix(in srgb, var(--lane) 42%, var(--card)); border: 0; border-radius: 18px; }
+.canvas.tiny .card::before, .canvas.tiny .card .ct, .canvas.tiny .card .cm { display: none; }
+.canvas.tiny .card.dirty::after { width: 34px; height: 34px; }
+.canvas.tiny .sticky { color: transparent; }
+
+/* right-click / long-press menu */
+.ctx { position: fixed; z-index: 60; min-width: 220px; max-width: min(340px, 92vw); max-height: 80vh; overflow: auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 6px; box-shadow: 0 12px 34px rgba(0,0,0,.18); font-size: 14.5px; animation: fade .1s; }
+.ctx .h { padding: 8px 10px 6px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx .it { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 9px 10px; border-radius: 8px; color: var(--ink); }
+.ctx .it:hover, .ctx .it:focus-visible { background: color-mix(in srgb, var(--ink) 7%, transparent); outline: none; }
+.ctx .it.danger { color: var(--bad); }
+.ctx .it.armed { background: color-mix(in srgb, var(--bad) 12%, transparent); font-weight: 650; }
+.ctx .row { display: flex; align-items: center; gap: 5px; padding: 6px 10px; flex-wrap: wrap; }
+.ctx .row > span:first-child { color: var(--muted); font-size: 13px; margin-right: 4px; flex-basis: 100%; }
+.ctx .row button { border: 1px solid var(--line); background: var(--paper); border-radius: 8px; padding: 5px 9px; font-size: 13.5px; }
+.ctx .row .tsv { color: var(--muted); font-size: 13px; margin-left: 4px; }
+.ctx .tg { border-color: var(--c) !important; color: var(--c); }
+.ctx .tg.on { background: var(--c) !important; color: #fff; }
+.ctx hr { border: 0; border-top: 1px solid var(--line); margin: 5px 4px; }
+
+/* structure sheet */
+.sheet h4 { margin: 14px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.srow { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.srow input:not([type=color]) { flex: 1; }
+.srow input[type=color] { width: 42px; height: 40px; border: 1px solid var(--line); border-radius: 10px; padding: 3px; background: var(--paper); flex: none; }
+.srow select { padding: 9px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); flex: none; }
+.srow .x { width: 36px; height: 36px; font-size: 20px; }
+textarea.field { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: var(--paper); resize: vertical; font: 16px/1.5 var(--ui); }
+.stack.col { flex-direction: column; align-items: stretch; }
 
 /* ---------- settings ---------- */
 .settings .card { position: static; width: auto; height: auto; cursor: auto; user-select: auto; -webkit-user-select: auto; padding: 16px 18px; margin: 0 0 14px; }
@@ -185,11 +241,16 @@ p.big { font-size: 17px; }
   .brand span { max-width: 40vw; }
 }
 
+  .wideonly { display: grid; }
+  body.edfull.editing #app { grid-template-columns: 76px 0 1fr; }
+  body.edfull.editing main { display: none; }
+
 /* ---------- desktop: labelled sidebar, roomier editor ---------- */
 @media (min-width: 1200px) {
   #app { grid-template-columns: 200px 1fr; }
   body.editing #app { grid-template-columns: 200px minmax(380px, 1fr) minmax(520px, 1.3fr); }
   body.editing[data-view=board] #app { grid-template-columns: 200px 1fr 520px; }
+  body.edfull.editing #app { grid-template-columns: 200px 0 1fr; }
   .tabs { padding: 14px 12px; }
   .tabs button { flex-direction: row; justify-content: flex-start; gap: 12px; height: 44px; padding: 0 14px; font-size: 14.5px; }
   .tabs svg { width: 21px; height: 21px; }
@@ -202,6 +263,7 @@ p.big { font-size: 17px; }
 
 /* phone: hide labels we don't need, keep the editor full-screen */
 @media (max-width: 699px) {
+  .wideonly { display: none; }
   .boardtools .hint { display: none; }
   .grid { grid-template-columns: 1fr; } .span2 { grid-column: auto; }
   .cmp { grid-template-columns: 1fr; }

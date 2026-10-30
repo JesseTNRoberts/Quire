@@ -1,7 +1,7 @@
 // Quire app UI. Plain DOM, no build step.
 import { pickBackend } from './backend.js';
 import { Book } from './sync.js';
-import { actOf, laneOf, CARD, manuscript, wordCount, exportTree } from './format.js';
+import { actOf, laneOf, CARD, manuscript, wordCount, exportTree, laneGeom, laneIndexAt, fitInLane, MIN_LANE_H } from './format.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -11,6 +11,7 @@ const ago = t => { if (!t) return 'never'; const s = (Date.now() - t) / 1000; re
 
 const S = { view: ls.get('quire-view', 'book'), openId: null, openFile: null, tab: 'beat', filter: 'all', q: '', zoom: ls.get('quire-zoom', innerWidth < 700 ? 0.5 : innerWidth < 1200 ? 0.7 : 0.85), slug: ls.get('quire-book', null) };
 let book, backend, me;
+S.linkFrom = null;
 window.quire = { S, get book() { return book; }, get backend() { return backend; } }; // for debugging from the console
 
 // ---------------- boot ----------------
@@ -135,7 +136,7 @@ async function bookMenu() {
 
 // ---------------- keyboard (desktop and tablets with keyboards) ----------------
 addEventListener('keydown', e => {
-  if (e.key === 'Escape') { if (!$('#sheet').hidden) { $('#sheet').hidden = true; return; } if (!$('#editor').hidden) { closeEditor(); return; } }
+  if (e.key === 'Escape') { if ($('#ctx') && !$('#ctx').hidden) { hideCtx(); return; } if (S.linkFrom) { S.linkFrom = null; renderMain(); return; } if (!$('#sheet').hidden) { $('#sheet').hidden = true; return; } if (!$('#editor').hidden) { closeEditor(); return; } }
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
   if (typing || e.metaKey || e.ctrlKey || e.altKey || !book) return;
   const views = ['book', 'board', 'notes', 'settings'];
@@ -211,6 +212,7 @@ function openBeat(id, focusTitle = false) {
     <div class="edhead">
       <button class="icon" id="edBack" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
       <input class="title" id="edTitle" value="${esc(b.title)}" aria-label="Title" spellcheck="true">
+      <button class="icon wideonly" id="edFull" aria-label="Full screen"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
       <button class="icon" id="edMore" aria-label="More"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
     </div>
     <div class="edmeta" id="edMeta"></div>
@@ -225,6 +227,7 @@ function openBeat(id, focusTitle = false) {
   $('#edTitle').addEventListener('input', e => book.edit(id, { title: e.target.value }));
   $('#edBack').onclick = closeEditor;
   $('#edMore').onclick = () => beatMenu(id);
+  $('#edFull').onclick = () => document.body.classList.toggle('edfull');
   $('#edTabs').onclick = e => { const t = e.target.closest('[data-tab]'); if (!t) return; S.tab = t.dataset.tab; ed.querySelectorAll('[data-tab]').forEach(x => x.classList.toggle('on', x === t)); ed.querySelectorAll('textarea').forEach(x => x.hidden = x.dataset.field !== S.tab); footer(); };
   editorMeta(); footer(); conflictBanner();
   if (focusTitle) { const t = $('#edTitle'); t.focus(); t.select(); }
@@ -236,7 +239,7 @@ addEventListener('popstate', () => { if (!$('#editor').hidden) closeEditor(true)
 
 function closeEditor(fromPop) {
   const ed = $('#editor'); if (ed.hidden) return;
-  ed.hidden = true; ed.innerHTML = ''; document.body.classList.remove('editing');
+  ed.hidden = true; ed.innerHTML = ''; document.body.classList.remove('editing', 'edfull');
   S.openId = null; S.openFile = null;
   book?.pushNow();
   renderMain();
@@ -337,7 +340,7 @@ function pickLane(id) {
   const board = book.boardData();
   sheet(`<h3>Stream</h3><div class="list">${(board.lanes || []).map((l, n) => `<button class="item" data-n="${n}"><span style="color:${l.color}">●</span> ${esc(l.name)}</button>`).join('')}</div><button class="btn" data-close>Close</button>`,
     (el, close) => el.querySelectorAll('[data-n]').forEach(x => x.onclick = () => {
-      book.editBoard(bd => { bd.beats[id].y = CARD.laneTop + Number(x.dataset.n) * CARD.laneH + 45; });
+      book.editBoard(bd => { bd.beats[id].y = fitInLane(bd, Number(x.dataset.n), 0); });
       close(); editorMeta();
     }));
 }
@@ -362,76 +365,330 @@ function pickTags(id) {
 // ---------------- board view ----------------
 function renderBoard(main, fresh) {
   const board = book.boardData(), beats = book.allBeats().filter(b => !b.deleted);
-  const lanes = board.lanes || [], z = S.zoom;
+  const lanes = board.lanes || [], z = S.zoom, ts = board.textScale || 1, far = z < 0.42;
   let maxX = 0; for (const p of Object.values(board.beats || {})) maxX = Math.max(maxX, p.x);
   for (const a of board.acts || []) maxX = Math.max(maxX, a.x);
-  const W = maxX + CARD.w + 300, H = CARD.laneTop + Math.max(1, lanes.length) * CARD.laneH + 60;
+  for (const n of board.notes || []) maxX = Math.max(maxX, n.x);
+  const geom = laneGeom(board), lastG = geom[geom.length - 1];
+  const W = maxX + CARD.w + 600, H = (lastG ? lastG.top + lastG.h : CARD.laneTop + CARD.laneH) + 60;
   const keepScroll = !fresh && $('.boardwrap', main) ? [$('.boardwrap', main).scrollLeft, $('.boardwrap', main).scrollTop] : null;
   const topics = new Map((board.topics || []).map(t => [t.id, t]));
-  const center = id => { const p = board.beats[id]; return p && [p.x + CARD.w / 2, p.y + CARD.h / 2]; };
-  main.innerHTML = `<div class="boardtools"><button class="btn" data-z="-">−</button><button class="btn" data-z="+">+</button><button class="btn" data-z="fit">Whole book</button><span class="muted hint">Drag cards to move · tap to open</span></div>
-  <div class="boardwrap"><div class="sizer" style="width:${W * z}px;height:${H * z}px"><div class="canvas" style="width:${W}px;height:${H}px;transform:scale(${z})">
-    ${lanes.map((l, n) => `<div class="lane" style="top:${CARD.laneTop + n * CARD.laneH}px;height:${CARD.laneH}px;--c:${l.color}"><span>${esc(l.name)}</span></div>`).join('')}
-    ${(board.acts || []).map(a => `<div class="actline" style="left:${Math.max(0, a.x - 16)}px"><b>${esc(a.name)}</b><small>${esc(a.sub || '')}</small></div>`).join('')}
-    ${(board.days || []).map(d => `<div class="dayline" style="left:${d.x - 8}px"><span>${esc(d.date || (d.days != null ? `+${d.days} days` : ''))}</span></div>`).join('')}
-    ${(board.notes || []).map(n => `<div class="sticky" style="left:${n.x}px;top:${n.y}px;background:${n.color || '#F6E7A6'}">${esc(n.text)}</div>`).join('')}
+  const center = id => { const p = board.beats[id]; if (p) return [p.x + CARD.w / 2, p.y + CARD.h / 2]; const n = (board.notes || []).find(x => x.id === id); return n && [n.x + 100, n.y + 40]; };
+  const touchy = matchMedia('(pointer: coarse)').matches;
+  main.innerHTML = `<div class="boardtools">
+      <button class="btn" data-z="-" aria-label="Zoom out">−</button><button class="btn" data-z="+" aria-label="Zoom in">+</button><button class="btn" data-z="fit">Whole book</button>
+      <span class="sep"></span><button class="btn" data-ts="-1" aria-label="Smaller card text">A−</button><button class="btn" data-ts="1" aria-label="Larger card text">A+</button><span class="muted tsv">${Math.round(ts * 100)}%</span>
+      <span class="muted hint">${S.linkFrom ? '' : touchy ? 'Hold a card to drag it · hold for more' : 'Drag cards to move · right-click for more'}</span></div>
+    ${S.linkFrom ? `<div class="linkbar">Now tap the beat the arrow should point to. <button class="btn" id="linkCancel">Cancel</button></div>` : ''}
+  <div class="boardwrap ${S.linkFrom ? 'linking' : ''}"><div class="sizer" style="width:${W * z}px;height:${H * z}px"><div class="canvas ${far ? 'far' : ''} ${z < 0.25 ? 'tiny' : ''}" style="width:${W}px;height:${H}px;transform:scale(${z});--ts:${ts};--iz:${(1 / z).toFixed(3)}">
+    ${lanes.map((l, n) => `<div class="lane" data-lane="${n}" style="top:${geom[n].top}px;height:${geom[n].h}px;--c:${l.color}"><span>${esc(l.name)}</span><i class="lanegrip" data-grip="${n}" title="Drag to change this stream's height"></i></div>`).join('')}
+    ${(board.acts || []).map(a => `<div class="actline" data-aid="${esc(a.id)}" style="left:${Math.max(0, a.x - 16)}px"><b>${esc(a.name)}</b><small>${esc(a.sub || '')}</small></div>`).join('')}
+    ${(board.days || []).map(d => `<div class="dayline" data-did="${esc(d.id)}" style="left:${d.x - 8}px"><span>${esc(d.date || (d.days != null ? `+${d.days} day${d.days == 1 ? '' : 's'}` : ''))}</span></div>`).join('')}
     <svg class="links" width="${W}" height="${H}">${(board.links || []).map(l => { const a = center(l.from), b = center(l.to); return a && b ? `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" marker-end="url(#ah)"/>` : ''; }).join('')}<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z"/></marker></defs></svg>
+    ${(board.notes || []).map(n => `<div class="sticky" data-nid="${esc(n.id)}" style="left:${n.x}px;top:${n.y}px;background:${n.color || '#F6E7A6'}">${esc(n.text)}</div>`).join('')}
     ${beats.map(b => { const p = board.beats?.[b.id]; if (!p) return ''; const lane = laneOf(board, p);
-      return `<div class="card ${b.dirty ? 'dirty' : ''} ${S.openId === b.id ? 'on' : ''}" data-id="${b.id}" style="left:${p.x}px;top:${p.y}px;--lane:${lane?.color || '#888'}">
-        <div class="ct">${esc(b.title)}</div><div class="cs">${esc(b.synopsis || b.beat.slice(0, 200))}</div>
-        <div class="cm">${(p.tags || []).map(t => topics.get(t)).filter(Boolean).map(t => `<i style="background:${t.color}"></i>`).join('')}${b.adjust.trim() ? '<em>Adjust</em>' : ''}</div></div>`; }).join('')}
+      return `<div title="${esc(b.title)}" class="card ${b.dirty ? 'dirty' : ''} ${S.openId === b.id ? 'on' : ''} ${S.linkFrom === b.id ? 'from' : ''}" data-id="${b.id}" style="left:${p.x}px;top:${p.y}px;--lane:${lane?.color || '#888'}">
+        <div class="ct">${esc(b.title)}</div><div class="cs">${esc(b.synopsis || b.beat.slice(0, 300))}</div>
+        <div class="cm">${(p.tags || []).map(t => topics.get(t)).filter(Boolean).map(t => `<i style="background:${t.color}" title="${esc(t.name)}"></i>`).join('')}${b.adjust.trim() ? '<em>Adjust</em>' : ''}</div></div>`; }).join('')}
   </div></div></div>`;
-  const wrap = $('.boardwrap', main);
+  const wrap = $('.boardwrap', main), canvas = $('.canvas', main);
   if (keepScroll) [wrap.scrollLeft, wrap.scrollTop] = keepScroll;
   main.querySelectorAll('[data-z]').forEach(b => b.onclick = () => {
     const k = b.dataset.z;
-    S.zoom = k === 'fit' ? Math.max(0.15, Math.min(1, (wrap.clientWidth - 20) / W)) : Math.max(0.15, Math.min(1.4, S.zoom * (k === '+' ? 1.25 : 0.8)));
+    S.zoom = k === 'fit' ? Math.max(0.12, Math.min(1, (wrap.clientWidth - 20) / W)) : Math.max(0.12, Math.min(1.6, S.zoom * (k === '+' ? 1.25 : 0.8)));
     ls.set('quire-zoom', S.zoom); renderBoard(main, true);
   });
-  dragCards(wrap, z);
+  main.querySelectorAll('.boardtools [data-ts]').forEach(b => b.onclick = () => setTextScale(+b.dataset.ts));
+  $('#linkCancel', main)?.addEventListener('click', () => { S.linkFrom = null; renderBoard(main); });
+  boardInteract(wrap, canvas, main, z);
   wrap.addEventListener('wheel', e => {
+    hideCtx();
     if (!e.ctrlKey) return; e.preventDefault();
     const r = wrap.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
     const wx = (wrap.scrollLeft + mx) / S.zoom, wy = (wrap.scrollTop + my) / S.zoom;
-    S.zoom = Math.max(0.15, Math.min(1.4, S.zoom * Math.exp(-e.deltaY * 0.01)));
-    const sizer = $('.sizer', wrap), canvas = $('.canvas', wrap);
-    sizer.style.width = W * S.zoom + 'px'; sizer.style.height = H * S.zoom + 'px'; canvas.style.transform = `scale(${S.zoom})`;
+    S.zoom = Math.max(0.12, Math.min(1.6, S.zoom * Math.exp(-e.deltaY * 0.01)));
+    const sizer = $('.sizer', wrap);
+    sizer.style.width = W * S.zoom + 'px'; sizer.style.height = H * S.zoom + 'px'; canvas.style.transform = `scale(${S.zoom})`; canvas.style.setProperty('--iz', (1 / S.zoom).toFixed(3));
+    canvas.classList.toggle('far', S.zoom < 0.42); canvas.classList.toggle('tiny', S.zoom < 0.25);
     wrap.scrollLeft = wx * S.zoom - mx; wrap.scrollTop = wy * S.zoom - my;
     clearTimeout(renderBoard.t); renderBoard.t = setTimeout(() => { ls.set('quire-zoom', S.zoom); renderBoard(main); }, 250);
   }, { passive: false });
 }
 
-function dragCards(wrap, z) {
-  let drag = null;
+function setTextScale(step) {
+  book.editBoard(bd => { bd.textScale = Math.round(Math.max(0.6, Math.min(2.5, (bd.textScale || 1) + step * 0.1)) * 10) / 10; });
+  const ts = book.boardData().textScale;
+  document.querySelectorAll('.canvas').forEach(c => c.style.setProperty('--ts', ts));
+  document.querySelectorAll('.tsv').forEach(s => s.textContent = Math.round(ts * 100) + '%');
+}
+
+// Drag, tap, long-press and right-click on the board.
+function boardInteract(wrap, canvas, main, z) {
+  const worldAt = (cx, cy) => { const r = canvas.getBoundingClientRect(); return { x: (cx - r.left) / z, y: (cy - r.top) / z }; };
+  let drag = null, press = null, suppressCtx = 0;
   wrap.addEventListener('pointerdown', e => {
-    const card = e.target.closest('.card'); if (!card) return;
+    hideCtx();
+    if (e.button === 2) return;
+    const grip = e.target.closest('.lanegrip');
+    if (grip) { e.preventDefault(); e.stopPropagation(); resizeLane(grip, +grip.dataset.grip, e, z, main); return; }
+    const el = e.target.closest('.card, .sticky');
     const touch = e.pointerType === 'touch';
-    drag = { card, id: card.dataset.id, sx: e.clientX, sy: e.clientY, x0: parseFloat(card.style.left), y0: parseFloat(card.style.top), live: false, pid: e.pointerId };
-    if (touch) drag.timer = setTimeout(() => { if (drag) { drag.live = true; card.classList.add('lift'); navigator.vibrate?.(10); } }, 350);
+    if (!el) {
+      // Long-press on empty board opens the menu on touch screens.
+      if (touch) press = { sx: e.clientX, sy: e.clientY, timer: setTimeout(() => { suppressCtx = Date.now(); navigator.vibrate?.(10); boardMenu(e.clientX, e.clientY, e.target, worldAt(e.clientX, e.clientY)); press = null; }, 550) };
+      return;
+    }
+    drag = { el, kind: el.classList.contains('card') ? 'card' : 'note', id: el.dataset.id || el.dataset.nid, sx: e.clientX, sy: e.clientY,
+      x0: parseFloat(el.style.left), y0: parseFloat(el.style.top), live: false, held: false, moved: false, pid: e.pointerId, touch };
+    if (touch) drag.timer = setTimeout(() => { if (drag) { drag.live = drag.held = true; el.classList.add('lift'); navigator.vibrate?.(10); } }, 350);
   });
   wrap.addEventListener('pointermove', e => {
+    if (press && Math.hypot(e.clientX - press.sx, e.clientY - press.sy) > 8) { clearTimeout(press.timer); press = null; }
     if (!drag) return;
     const dx = (e.clientX - drag.sx) / z, dy = (e.clientY - drag.sy) / z;
     if (!drag.live) {
-      if (Math.hypot(dx * z, dy * z) > 6) { if (e.pointerType === 'touch') { clearTimeout(drag.timer); drag = null; return; } drag.live = true; drag.card.classList.add('lift'); }
+      if (Math.hypot(dx * z, dy * z) > 6) { if (drag.touch) { clearTimeout(drag.timer); drag = null; return; } drag.live = true; drag.el.classList.add('lift'); }
       else return;
     }
+    if (Math.hypot(dx * z, dy * z) > 4) drag.moved = true;
     e.preventDefault();
-    try { drag.card.setPointerCapture(drag.pid); } catch {}
-    drag.card.style.left = drag.x0 + dx + 'px'; drag.card.style.top = drag.y0 + dy + 'px';
+    try { drag.el.setPointerCapture(drag.pid); } catch {}
+    drag.el.style.left = drag.x0 + dx + 'px'; drag.el.style.top = drag.y0 + dy + 'px';
   });
   wrap.addEventListener('touchmove', e => { if (drag?.live) e.preventDefault(); }, { passive: false });
   const end = e => {
+    if (press) { clearTimeout(press.timer); press = null; }
     if (!drag) return;
     clearTimeout(drag.timer);
-    const { card, id, live } = drag; drag = null;
-    card.classList.remove('lift');
-    if (!live) { if (e.type === 'pointerup') openBeat(id); return; }
-    const x = Math.round(parseFloat(card.style.left)), y = parseFloat(card.style.top);
-    const n = Math.max(0, Math.floor((y + CARD.h / 2 - CARD.laneTop) / CARD.laneH));
-    book.editBoard(bd => { bd.beats[id] = { ...bd.beats[id], x: Math.max(0, x), y: CARD.laneTop + Math.min(n, (bd.lanes || [1]).length - 1) * CARD.laneH + 45 }; });
+    const d = drag; drag = null;
+    d.el.classList.remove('lift');
+    if (d.held && !d.moved) {   // touch: hold without moving = the menu
+      suppressCtx = Date.now();
+      boardMenu(e.clientX, e.clientY, d.el, worldAt(e.clientX, e.clientY));
+      return;
+    }
+    if (!d.live) {
+      if (e.type !== 'pointerup') return;
+      if (d.kind === 'card' && S.linkFrom) { addLink(S.linkFrom, d.id); return; }
+      if (d.kind === 'card') openBeat(d.id);
+      return;
+    }
+    const x = Math.round(parseFloat(d.el.style.left)), y = parseFloat(d.el.style.top);
+    if (d.kind === 'note') { book.editBoard(bd => { const n = bd.notes.find(n => n.id === d.id); if (n) { n.x = Math.max(0, x); n.y = Math.max(0, Math.round(y)); } }); return; }
+    book.editBoard(bd => { const n = laneIndexAt(bd, y + CARD.h / 2); bd.beats[d.id] = { ...bd.beats[d.id], x: Math.max(0, x), y: fitInLane(bd, n, y) }; });
   };
   wrap.addEventListener('pointerup', end); wrap.addEventListener('pointercancel', end);
+  wrap.addEventListener('click', e => { if (S.linkFrom && !e.target.closest('.card')) { S.linkFrom = null; renderBoard(main); } });
+  wrap.addEventListener('dblclick', e => { const n = e.target.closest('.sticky'); if (n) editNote(n.dataset.nid); });
+  wrap.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    if (Date.now() - suppressCtx < 900) return;
+    boardMenu(e.clientX, e.clientY, e.target, worldAt(e.clientX, e.clientY));
+  });
+}
+
+// Drag the bottom edge of a stream to make it taller or shorter. Everything below moves with it.
+function resizeLane(grip, n, e, z, main) {
+  const laneEl = grip.parentElement, g = laneGeom(book.boardData())[n], sy = e.clientY;
+  // Can't shrink past the lowest card in this stream.
+  let minH = MIN_LANE_H;
+  for (const p of Object.values(book.boardData().beats || {})) if (p.y + CARD.h / 2 >= g.top && p.y + CARD.h / 2 < g.top + g.h) minH = Math.max(minH, p.y - g.top + CARD.h + 20);
+  let h = g.h;
+  laneEl.classList.add('resizing');
+  try { grip.setPointerCapture(e.pointerId); } catch {}
+  const move = ev => { h = Math.round(Math.max(minH, Math.min(2400, g.h + (ev.clientY - sy) / z))); laneEl.style.height = h + 'px'; };
+  const up = () => {
+    grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up); grip.removeEventListener('pointercancel', up);
+    laneEl.classList.remove('resizing');
+    const delta = h - g.h; if (!delta) return;
+    const bottom = g.top + g.h;
+    book.editBoard(bd => {
+      bd.lanes[n].h = h;
+      for (const m of [...Object.values(bd.beats || {}), ...Object.values(bd.trash || {})]) if (m.y + CARD.h / 2 >= bottom) m.y += delta;
+      for (const note of bd.notes || []) if (note.y >= bottom) note.y += delta;
+    });
+  };
+  grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', up); grip.addEventListener('pointercancel', up);
+}
+
+// ---------- the right-click menu (same items as the Gale House Storyboard) ----------
+function hideCtx() { const c = $('#ctx'); if (c && !c.hidden) { c.hidden = true; c.innerHTML = ''; } }
+addEventListener('pointerdown', e => { if (!e.target.closest('#ctx')) hideCtx(); }, true);
+addEventListener('resize', hideCtx);
+
+function showCtx(cx, cy, html, acts) {
+  let c = $('#ctx');
+  if (!c) { c = document.createElement('div'); c.id = 'ctx'; c.className = 'ctx'; c.setAttribute('role', 'menu'); document.body.append(c); }
+  c.innerHTML = html; c.hidden = false;
+  const r = c.getBoundingClientRect();
+  c.style.left = Math.max(8, Math.min(cx, innerWidth - r.width - 8)) + 'px';
+  c.style.top = Math.max(8, Math.min(cy, innerHeight - r.height - 8)) + 'px';
+  c.querySelectorAll('[data-a]').forEach(btn => btn.onclick = () => {
+    const a = btn.dataset.a;
+    if (btn.classList.contains('danger') && !btn.classList.contains('armed')) { btn.classList.add('armed'); btn.textContent = 'Click again to confirm'; return; }
+    if (!btn.dataset.keep) hideCtx();
+    acts[a]?.(btn.dataset.v);
+  });
+  c.querySelector('button')?.focus({ preventScroll: true });
+}
+
+const ctxItem = (a, label, cls = '', v = '') => `<button class="it ${cls}" role="menuitem" data-a="${a}" ${v !== '' ? `data-v="${esc(v)}"` : ''}>${esc(label)}</button>`;
+const sizeRow = () => { const ts = book.boardData().textScale || 1; return `<div class="row"><span>Text size</span><button data-a="ts" data-v="-1" data-keep="1" aria-label="Smaller card text">A−</button><button data-a="ts" data-v="1" data-keep="1" aria-label="Larger card text">A+</button><span class="tsv">${Math.round(ts * 100)}%</span></div>`; };
+
+function boardMenu(cx, cy, target, w) {
+  const board = book.boardData();
+  const card = target.closest?.('.card'), note = target.closest?.('.sticky'), day = target.closest?.('.dayline'), act = target.closest?.('.actline');
+  const common = { ts: v => setTextScale(+v), fit: () => $('[data-z="fit"]')?.click(), structure: structureSheet };
+  if (card) {
+    const id = card.dataset.id, b = book.beat(id), tags = new Set(board.beats?.[id]?.tags || []);
+    const hasLinks = (board.links || []).some(l => l.from === id || l.to === id);
+    showCtx(cx, cy, `<div class="h">${esc(b.title)}</div>` + ctxItem('open', 'Open') + ctxItem('full', 'Open full screen') + ctxItem('arrow', 'Draw arrow from here') +
+      (hasLinks ? ctxItem('unlink', 'Remove arrows on this beat') : '') + ctxItem('after', 'New beat after this one') +
+      ((board.topics || []).length ? `<div class="row wrap"><span>Tags</span>${board.topics.map(t => `<button class="tg ${tags.has(t.id) ? 'on' : ''}" data-a="tag" data-v="${esc(t.id)}" data-keep="1" style="--c:${t.color}">${esc(t.name)}</button>`).join('')}</div>` : '') +
+      sizeRow() + '<hr>' + ctxItem('retire', 'Mark for deletion', 'danger'), {
+      ...common,
+      open: () => openBeat(id), full: () => { document.body.classList.add('edfull'); openBeat(id); },
+      arrow: () => { S.linkFrom = id; renderMain(); }, after: () => openBeat(book.createBeat({}, id), true),
+      unlink: () => book.editBoard(bd => { bd.links = (bd.links || []).filter(l => l.from !== id && l.to !== id); }),
+      tag: tid => { book.editBoard(bd => { const t = new Set(bd.beats[id].tags || []); t.has(tid) ? t.delete(tid) : t.add(tid); bd.beats[id].tags = [...t]; });
+        $(`#ctx [data-v="${CSS.escape(tid)}"]`)?.classList.toggle('on'); },
+      retire: () => { book.retire(id, true); if (S.openId === id) closeEditor(); toast('Marked for deletion. Restore it from Book → Retired.'); },
+    });
+  } else if (note) {
+    const id = note.dataset.nid;
+    showCtx(cx, cy, `<div class="h">Sticky note</div>` + ctxItem('edit', 'Edit text') + ctxItem('arrow', 'Draw arrow from here') + ctxItem('color', 'Change color') + '<hr>' + ctxItem('del', 'Delete note', 'danger'), {
+      edit: () => editNote(id), arrow: () => { S.linkFrom = id; renderMain(); },
+      color: () => book.editBoard(bd => { const n = bd.notes.find(n => n.id === id); const cs = NOTE_COLORS; n.color = cs[(cs.indexOf(n.color) + 1) % cs.length]; }),
+      del: () => book.editBoard(bd => { bd.notes = bd.notes.filter(n => n.id !== id); bd.links = (bd.links || []).filter(l => l.from !== id && l.to !== id); }),
+    });
+  } else if (day) {
+    const id = day.dataset.did;
+    showCtx(cx, cy, ctxItem('edit', 'Edit this date') + '<hr>' + ctxItem('del', 'Remove this date', 'danger'), {
+      edit: () => dateSheet(id), del: () => book.editBoard(bd => { bd.days = bd.days.filter(d => d.id !== id); }),
+    });
+  } else if (act) {
+    showCtx(cx, cy, ctxItem('structure', 'Acts, streams & tags…') + sizeRow(), common);
+  } else {
+    showCtx(cx, cy, ctxItem('beat', 'New beat here') + ctxItem('note', 'Add note here') +
+      `<div class="row"><span>Insert space here</span>${[1, 2, 4].map(n => `<button data-a="gap" data-v="${n}">${n} card${n > 1 ? 's' : ''}</button>`).join('')}</div>` +
+      `<div class="row"><span>Remove space here</span>${[1, 2, 4].map(n => `<button data-a="ungap" data-v="${n}">${n} card${n > 1 ? 's' : ''}</button>`).join('')}</div>` +
+      ctxItem('date', 'Add date here') + sizeRow() + '<hr>' + ctxItem('fit', 'Whole book') + ctxItem('structure', 'Acts, streams & tags…'), {
+      ...common,
+      beat: () => {
+        const id = book.createBeat({});
+        book.editBoard(bd => { const n = laneIndexAt(bd, w.y); bd.beats[id] = { x: Math.max(0, Math.round(w.x - CARD.w / 2)), y: fitInLane(bd, n, w.y - CARD.h / 2), tags: [] }; });
+        openBeat(id, true);
+      },
+      note: () => { const id = 'n' + Date.now().toString(36); book.editBoard(bd => { bd.notes = [...(bd.notes || []), { id, x: Math.max(0, Math.round(w.x - 100)), y: Math.max(0, Math.round(w.y - 20)), text: '', color: NOTE_COLORS[0] }]; }); editNote(id); },
+      gap: n => { book.editBoard(bd => insertSpace(bd, w.x, n * CARD.step)); toast(`Opened a gap of ${n} card${n > 1 ? 's' : ''}`, 1500); },
+      ungap: n => { let got = 0; book.editBoard(bd => { got = removeSpace(bd, w.x, n * CARD.step); }); toast(got ? 'Closed up the space' : 'No empty space to remove there', 1500); },
+      date: () => dateSheet(null, Math.round(w.x)),
+    });
+  }
+}
+
+const NOTE_COLORS = ['#F6E7A6', '#F7C9B6', '#CFE5C8', '#C9DDF2', '#E4D2F0'];
+
+function addLink(from, to) {
+  S.linkFrom = null;
+  if (from === to) { renderMain(); return; }
+  book.editBoard(bd => { bd.links = [...(bd.links || []), { id: 'k' + Date.now().toString(36), from, to, label: '' }]; });
+  toast('Arrow added', 1200);
+}
+
+function insertSpace(bd, x, gap) {
+  for (const m of [...Object.values(bd.beats || {}), ...Object.values(bd.trash || {})]) if (m.x + CARD.w / 2 >= x) m.x += gap;
+  for (const n of bd.notes || []) if (n.x + 100 >= x) n.x += gap;
+  for (const a of bd.acts || []) if (a.x > x) a.x += gap;
+  for (const d of bd.days || []) if (d.x > x) d.x += gap;
+}
+// Closes up empty space to the right of x; never moves anything onto a card or note. Returns the gap closed.
+function removeSpace(bd, x, want) {
+  const items = [...Object.values(bd.beats || {}).map(m => [m.x, m.x + CARD.w]), ...(bd.notes || []).map(n => [n.x, n.x + 200])];
+  let start = x; items.forEach(([l, r]) => { if (l < start && r > start) start = r; });
+  let limit = Infinity;
+  items.forEach(([l]) => { if (l >= start) limit = Math.min(limit, l - start); });
+  [...(bd.acts || []), ...(bd.days || [])].forEach(v => { if (v.x > start) limit = Math.min(limit, v.x - start); });
+  const gap = Math.round(Math.min(want, limit === Infinity ? want : limit));
+  if (gap < 10) return 0;
+  for (const m of [...Object.values(bd.beats || {}), ...Object.values(bd.trash || {})]) if (m.x >= start) m.x -= gap;
+  for (const n of bd.notes || []) if (n.x >= start) n.x -= gap;
+  for (const a of bd.acts || []) if (a.x > start) a.x -= gap;
+  for (const d of bd.days || []) if (d.x > start) d.x -= gap;
+  return gap;
+}
+
+function editNote(id) {
+  const n = (book.boardData().notes || []).find(n => n.id === id); if (!n) return;
+  sheet(`<h3>Sticky note</h3><textarea id="nt" rows="5" class="field">${esc(n.text)}</textarea>
+    <div class="row-btns"><button class="btn primary" data-close id="nsave">Done</button></div>`, (el) => {
+    const ta = $('#nt', el); ta.focus();
+    ta.oninput = () => book.editBoard(bd => { const x = bd.notes.find(x => x.id === id); if (x) x.text = ta.value; });
+  });
+}
+
+function dateSheet(id, x) {
+  const bd = book.boardData(), d = id ? bd.days.find(d => d.id === id) : null;
+  const first = !(bd.days || []).some(o => o.date && o.id !== id);
+  sheet(`<h3>${d ? 'Edit date' : 'Add a date'}</h3>
+    <p class="muted">${first ? 'The first date sets the calendar.' : 'Pick a date, or count days since the previous date line.'}</p>
+    <form class="stack col" id="df">
+      <label>Date<input type="date" name="date" value="${esc(d?.date || '')}"></label>
+      ${first ? '' : `<label>…or days after the previous date<input type="number" name="days" min="0" value="${d?.days ?? ''}"></label>`}
+      <div class="row-btns"><button class="btn primary">Save</button><button class="btn" type="button" data-close>Cancel</button></div></form>`, (el, close) => {
+    $('#df', el).onsubmit = e => {
+      e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
+      const rec = f.date ? { date: f.date } : f.days !== undefined && f.days !== '' ? { days: Number(f.days) } : null;
+      if (!rec) return toast('Pick a date first');
+      book.editBoard(b => { if (d) { const t = b.days.find(o => o.id === id); delete t.date; delete t.days; Object.assign(t, rec); } else b.days = [...(b.days || []), { id: 'd' + Date.now().toString(36), x, ...rec }].sort((a, c) => a.x - c.x); });
+      close();
+    };
+  });
+}
+
+// Acts, streams and tags: rename, recolor, add.
+function structureSheet() {
+  const bd = book.boardData();
+  const row = (kind, o, i) => `<div class="srow" data-kind="${kind}" data-i="${i}">
+    <input name="name" value="${esc(o.name)}" aria-label="Name">
+    ${kind === 'acts' ? `<input name="sub" value="${esc(o.sub || '')}" placeholder="Subtitle" aria-label="Subtitle">` : `<input type="color" name="color" value="${esc(o.color || '#888888')}" aria-label="Color">`}
+    ${kind === 'lanes' ? `<select name="hc" aria-label="Height">${[1, 1.5, 2, 3].map(m => `<option value="${m}" ${Math.round((o.h || 240) / 240 * 2) / 2 === m ? 'selected' : ''}>${m === 1 ? '1 card tall' : m + ' cards tall'}</option>`).join('')}</select>` : ''}
+    ${kind === 'topics' ? `<button type="button" class="icon x" data-del="${i}" aria-label="Remove tag">×</button>` : ''}</div>`;
+  sheet(`<h3>Acts, streams &amp; tags</h3><form id="sf">
+    <h4>Acts</h4>${(bd.acts || []).map((a, i) => row('acts', a, i)).join('')}<button type="button" class="link" data-add="acts">+ Add an act at the end</button>
+    <h4>Streams</h4>${(bd.lanes || []).map((l, i) => row('lanes', l, i)).join('')}<button type="button" class="link" data-add="lanes">+ Add a stream</button>
+    <h4>Tags</h4>${(bd.topics || []).map((t, i) => row('topics', t, i)).join('')}<button type="button" class="link" data-add="topics">+ Add a tag</button>
+    <div class="row-btns"><button class="btn primary">Save</button><button class="btn" type="button" data-close>Cancel</button></div></form>`, (el, close) => {
+    const draft = JSON.parse(JSON.stringify({ acts: bd.acts || [], lanes: bd.lanes || [], topics: bd.topics || [] }));
+    const removed = new Set();
+    el.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
+      const k = b.dataset.add, i = draft[k].length;
+      const colors = ['#5B7DB1', '#8A6BB0', '#3E9A7E', '#C9822B', '#B5523B', '#9A8A3E'];
+      let maxX = 0; for (const p of Object.values(bd.beats || {})) maxX = Math.max(maxX, p.x);
+      const o = k === 'acts' ? { id: 'a' + Date.now().toString(36), name: `Act ${i + 1}`, sub: '', x: maxX + CARD.step * 2 } : { id: (k === 'lanes' ? 'l' : 't') + Date.now().toString(36), name: k === 'lanes' ? 'New stream' : 'New tag', color: colors[i % colors.length] };
+      draft[k].push(o); b.insertAdjacentHTML('beforebegin', row(k, o, i));
+    });
+    el.addEventListener('click', e => { const x = e.target.closest('[data-del]'); if (x) { removed.add(Number(x.dataset.del)); x.parentElement.remove(); } });
+    $('#sf', el).onsubmit = e => {
+      e.preventDefault();
+      el.querySelectorAll('.srow').forEach(r => { const o = draft[r.dataset.kind][r.dataset.i]; r.querySelectorAll('input').forEach(inp => o[inp.name] = inp.value); const hc = r.querySelector('select[name=hc]'); if (hc) o._h = Math.round(240 * hc.value); });
+      const goneTags = draft.topics.filter((_, i) => removed.has(i)).map(t => t.id);
+      book.editBoard(b => {
+        // Apply stream height changes one at a time, moving everything below each one.
+        draft.lanes.forEach((l, i) => {
+          const want = l._h; delete l._h;
+          const cur = laneGeom({ lanes: draft.lanes })[i];
+          if (!want || Math.abs(want - cur.h) < 30) return;
+          const delta = want - cur.h, bottom = cur.top + cur.h; l.h = want;
+          for (const m of [...Object.values(b.beats || {}), ...Object.values(b.trash || {})]) if (m.y + CARD.h / 2 >= bottom) m.y += delta;
+          for (const note of b.notes || []) if (note.y >= bottom) note.y += delta;
+        });
+        b.acts = draft.acts; b.lanes = draft.lanes; b.topics = draft.topics.filter((_, i) => !removed.has(i));
+        for (const m of Object.values(b.beats || {})) if (m.tags) m.tags = m.tags.filter(t => !goneTags.includes(t));
+      });
+      close(); toast('Saved');
+    };
+  });
 }
 
 // ---------------- notes view ----------------
