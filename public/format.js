@@ -192,8 +192,12 @@ function importScrivener(tree, opts) {
     } else if (/^Notes\//.test(p)) {
       const sub = p.slice(6);
       const dir = sub.includes('/') ? sub.slice(0, sub.lastIndexOf('/') + 1) : '';
-      const { title } = parseScrivName(sub.slice(dir.length));
-      files[`notes/${dir}${safeTitle(title)}.md`] = text;
+      let { title, deleted } = parseScrivName(sub.slice(dir.length));
+      if (deleted) title = 'TO DELETE - ' + title;
+      // Scrivener allows several notes with the same title; keep each one.
+      let np = `notes/${dir}${safeTitle(title)}.md`, n = 2;
+      while (np in files) np = `notes/${dir}${safeTitle(title)} (${n++}).md`;
+      files[np] = text;
     } else if (/^Claude chats\//.test(p)) files['chats/' + p.slice(13)] = text;
     else if (/^Claude\//.test(p)) files['claude/' + p.slice(7)] = text;
     else if (p !== boardPath && /\.(md|txt|json)$/i.test(p)) files['extra/' + p] = text;
