@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Quire</title>
+  <rect width="512" height="512" rx="112" fill="#1F2A44"/>
+  <!-- the ribbon bookmark is the tail of the Q -->
+  <path d="M352 318 H412 V468 L382 440 L352 468 Z" fill="#E0573E"/>
+  <!-- the Q: a ring of paper, open at the lower right where the ribbon falls -->
+  <path d="M352.4 370.9 A150 150 0 1 1 400.9 294.8" fill="none" stroke="#F4ECDD" stroke-width="46" stroke-linecap="round"/>
+  <!-- beats inside the Q -->
+  <rect x="176" y="196" width="160" height="22" rx="11" fill="#F4ECDD"/>
+  <rect x="176" y="245" width="112" height="22" rx="11" fill="#F4ECDD" opacity=".7"/>
+  <rect x="176" y="294" width="138" height="22" rx="11" fill="#F4ECDD" opacity=".45"/>
+</svg>

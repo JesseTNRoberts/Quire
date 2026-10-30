@@ -1,0 +1,19 @@
+name: Compile manuscript
+on: workflow_dispatch
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: sudo apt-get update && sudo apt-get install -y pandoc
+      - run: node .quire/compile.mjs > manuscript.md
+      - run: pandoc manuscript.md -o manuscript.docx && pandoc manuscript.md -o manuscript.epub --metadata title="$(head -1 manuscript.md | sed 's/^# //')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manuscript
+          path: |
+            manuscript.md
+            manuscript.docx
+            manuscript.epub

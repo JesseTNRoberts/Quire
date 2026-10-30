@@ -1,0 +1,16 @@
+{
+  "name": "quire",
+  "version": "0.1.0",
+  "description": "Quire: a phone-first beat-board novel app on Cloudflare + GitHub",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node test/format.test.mjs && node test/migrate.test.mjs",
+    "migrate": "node scripts/migrate.mjs"
+  },
+  "license": "ISC",
+  "devDependencies": {
+    "wrangler": "^4.156.0"
+  },
+  "type": "module"
+}
