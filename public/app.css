@@ -165,6 +165,7 @@ h2.act small { font-weight: 500; letter-spacing: 0; text-transform: none; color:
 .canvas.tiny .sticky { color: transparent; }
 
 /* right-click / long-press menu */
+.ctxback { position: fixed; inset: 0; z-index: 59; background: transparent; }
 .ctx { position: fixed; z-index: 60; min-width: 220px; max-width: min(340px, 92vw); max-height: 80vh; overflow: auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 6px; box-shadow: 0 12px 34px rgba(0,0,0,.18); font-size: 14.5px; animation: fade .1s; }
 .ctx .h { padding: 8px 10px 6px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctx .it { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 9px 10px; border-radius: 8px; color: var(--ink); }

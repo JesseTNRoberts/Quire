@@ -522,14 +522,25 @@ function resizeLane(grip, n, e, z, main) {
 }
 
 // ---------- the right-click menu (same items as the Gale House Storyboard) ----------
-function hideCtx() { const c = $('#ctx'); if (c && !c.hidden) { c.hidden = true; c.innerHTML = ''; } }
-addEventListener('pointerdown', e => { if (!e.target.closest('#ctx')) hideCtx(); }, true);
-addEventListener('resize', hideCtx);
+function hideCtx() {
+  const c = $('#ctx'); if (c && !c.hidden) { c.hidden = true; c.innerHTML = ''; }
+  const bk = $('#ctxback'); if (bk) bk.hidden = true;
+}
+for (const ev of ['pointerdown', 'mousedown', 'touchstart']) document.addEventListener(ev, e => { if (!e.target.closest?.('#ctx')) hideCtx(); }, { capture: true, passive: true });
+addEventListener('resize', hideCtx); addEventListener('blur', hideCtx);
 
 function showCtx(cx, cy, html, acts) {
   let c = $('#ctx');
-  if (!c) { c = document.createElement('div'); c.id = 'ctx'; c.className = 'ctx'; c.setAttribute('role', 'menu'); document.body.append(c); }
-  c.innerHTML = html; c.hidden = false;
+  if (!c) {
+    c = document.createElement('div'); c.id = 'ctx'; c.className = 'ctx'; c.setAttribute('role', 'menu');
+    // An invisible layer behind the menu: a click or tap anywhere else lands on it and closes the menu, in every browser.
+    const bk = document.createElement('div'); bk.id = 'ctxback'; bk.className = 'ctxback'; bk.hidden = true;
+    const close = e => { e.preventDefault(); e.stopPropagation(); hideCtx(); };
+    bk.addEventListener('pointerdown', close); bk.addEventListener('mousedown', close); bk.addEventListener('click', close);
+    bk.addEventListener('contextmenu', close); bk.addEventListener('touchstart', close, { passive: false });
+    document.body.append(bk, c);
+  }
+  c.innerHTML = html; c.hidden = false; $('#ctxback').hidden = false;
   const r = c.getBoundingClientRect();
   c.style.left = Math.max(8, Math.min(cx, innerWidth - r.width - 8)) + 'px';
   c.style.top = Math.max(8, Math.min(cy, innerHeight - r.height - 8)) + 'px';
