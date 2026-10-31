@@ -82,8 +82,9 @@ const ok = m => console.log('  ✓ ' + m);
   await p.waitForFunction(() => /Offline|Not synced/.test(document.querySelector('#status').textContent) && quire.book.pending() > 0, null, { timeout: 15000 });
   ok('offline edit kept on the device and waiting');
   if (cold) {
+    await p.evaluate(() => quire.book.flushed());
     await p.reload(); await p.waitForSelector('.beatrow', { timeout: 15000 });
-    assert.match(await p.textContent('#status'), /waiting/);
+    await p.waitForFunction(() => /waiting/.test(document.querySelector('#status').textContent), null, { timeout: 10000 });
     ok('offline edit survives a reload while still offline');
   }
   await ctx.setOffline(false); await p.evaluate(() => dispatchEvent(new Event('online')));

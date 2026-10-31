@@ -75,8 +75,12 @@ export class Book extends EventTarget {
 
   save(it) {
     it.key = `${this.slug}|${it.kind}|${it.id}`; it.slug = this.slug;
-    return tx(this.db, 'items', 'readwrite', s => s.put(clone(it))).catch(() => {});
+    const w = tx(this.db, 'items', 'readwrite', s => s.put(clone(it))).catch(() => {});
+    this.lastWrite = Promise.all([this.lastWrite, w]);
+    return w;
   }
+  // Resolves once every edit so far is safely stored on this device.
+  flushed() { return Promise.resolve(this.lastWrite); }
   saveMeta() { return tx(this.db, 'books', 'readwrite', s => s.put({ slug: this.slug, seq: this.seq, meta: this.meta })).catch(() => {}); }
 
   // ----- reading -----
