@@ -94,7 +94,7 @@ h2.act small { font-weight: 500; letter-spacing: 0; text-transform: none; color:
 .edtabs button.adj.has i { background: var(--adj-ink); }
 .edbody { flex: 1; display: flex; min-height: 0; position: relative; }
 .edbody :is(textarea, .hl) { flex: 1; width: 100%; resize: none; border: 0; outline: none; background: transparent; padding: 18px 18px 40px; font: calc(16px * var(--efs, 1))/1.6 var(--ui); white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; scrollbar-gutter: stable; letter-spacing: normal; tab-size: 4; }
-.edbody textarea { position: relative; z-index: 1; overflow-y: auto; }
+.edbody textarea { position: relative; z-index: 1; overflow-y: auto; -webkit-appearance: none; appearance: none; background-color: transparent !important; border-radius: 0; box-shadow: none; }
 /* The highlight layer sits exactly under the textarea and paints marks behind its text. */
 .edbody .hl { position: absolute; top: 0; bottom: 0; left: 0; right: 0; margin: 0 auto; z-index: 0; overflow: hidden; color: transparent; pointer-events: none; user-select: none; }
 .edbody textarea[hidden] + .hl { display: none; }
@@ -306,3 +306,9 @@ p.big { font-size: 17px; }
 #list.reordering .beatrow:not(.lifted) { opacity: .92; }
 body.noselect, body.noselect * { -webkit-user-select: none !important; user-select: none !important; }
 .haptic { position: fixed; left: -100px; top: -100px; width: 1px; height: 1px; opacity: 0; pointer-events: none; overflow: hidden; }
+
+/* rendered links and critical details in previews (lists, cards) */
+mark.crit { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+.s .wl, .cs .wl, .critrow .wl { color: #3B5F95; text-decoration: underline; text-decoration-color: color-mix(in srgb, #5B7DB1 55%, transparent); text-underline-offset: 2px; }
+.s .wl.broken, .cs .wl.broken { color: var(--bad); text-decoration-style: dashed; }
+@media (prefers-color-scheme: dark) { .s .wl, .cs .wl, .critrow .wl { color: #9DB8E6; } }

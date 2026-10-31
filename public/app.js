@@ -191,7 +191,7 @@ function renderBook(main, fresh) {
       const tags = (pos?.tags || []).map(t => topics.get(t)).filter(Boolean);
       html += `<button class="beatrow ${S.openId === b.id ? 'on' : ''}" data-id="${b.id}" style="--lane:${laneColor(board, pos)}">
         <div class="t">${esc(b.title)}${(n => n ? `<em class="badge crit" title="Critical details">★ ${n}</em>` : '')(['synopsis', 'beat', 'notes'].reduce((k, f) => k + findCritical(b[f]).length, 0))}${b.conflict ? '<em class="badge bad">Needs choice</em>' : ''}${b.adjust.trim() ? '<em class="badge adj">Adjust</em>' : ''}${b.dirty ? '<i class="dot" title="Not synced yet"></i>' : ''}</div>
-        ${b.synopsis ? `<div class="s">${esc(b.synopsis)}</div>` : ''}
+        ${b.synopsis ? `<div class="s">${rich(b.synopsis)}</div>` : ''}
         <div class="m">${pos ? esc(laneOf(board, pos)?.name || '') : ''}${tags.map(t => ` · <span style="color:${t.color}">${esc(t.name)}</span>`).join('')}${words ? ` · ${words.toLocaleString()} words` : ' · <span class="muted">empty</span>'}</div>
       </button>`;
     }
@@ -455,6 +455,21 @@ function backlinks(kind, id) {
   for (const b of book.allBeats()) if (!b.deleted) for (const f of ['synopsis', 'beat', 'notes', 'adjust']) check({ kind: 'beat', id: b.id, label: b.title }, b[f]);
   for (const f of book.allFiles()) check({ kind: 'file', id: f.path, label: fileName(f.path) }, f.content);
   return out.filter(s => !(s.kind === kind && s.id === id));
+}
+
+// Read-only rendering for previews: links show as their words (blue), critical details highlighted, no markup characters.
+function rich(text) {
+  const s = String(text || ''), parts = [];
+  let i = 0;
+  const re = new RegExp(`${CRIT_RE.source}|${LINK_RE.source}`, 'g');
+  for (const m of s.matchAll(re)) {
+    parts.push(esc(s.slice(i, m.index)));
+    if (m[1] !== undefined) parts.push(`<mark class="crit">${rich(m[1])}</mark>`);
+    else { const l = parseLink(m[2]); parts.push(`<span class="wl${resolveLink(l.target) ? '' : ' broken'}">${esc(l.alias || l.target)}</span>`); }
+    i = m.index + m[0].length;
+  }
+  parts.push(esc(s.slice(i)));
+  return parts.join('');
 }
 
 // The backdrop paints highlights exactly under the textarea's own text (text itself stays native and editable).
@@ -742,7 +757,7 @@ function renderBoard(main, fresh) {
     ${(board.notes || []).map(n => `<div class="sticky" data-nid="${esc(n.id)}" style="left:${n.x}px;top:${n.y}px;background:${n.color || '#F6E7A6'}">${esc(n.text)}</div>`).join('')}
     ${beats.map(b => { const p = board.beats?.[b.id]; if (!p) return ''; const lane = laneOf(board, p);
       return `<div title="${esc(b.title)}" class="card ${b.dirty ? 'dirty' : ''} ${S.openId === b.id ? 'on' : ''} ${S.linkFrom === b.id ? 'from' : ''}" data-id="${b.id}" style="left:${p.x}px;top:${p.y}px;--lane:${lane?.color || '#888'}">
-        <div class="ct">${esc(b.title)}</div><div class="cs">${esc(b.synopsis || b.beat.slice(0, 300))}</div>
+        <div class="ct">${esc(b.title)}</div><div class="cs">${rich(b.synopsis || b.beat.slice(0, 300))}</div>
         <div class="cm">${(p.tags || []).map(t => topics.get(t)).filter(Boolean).map(t => `<i style="background:${t.color}" title="${esc(t.name)}"></i>`).join('')}${b.adjust.trim() ? '<em>Adjust</em>' : ''}</div></div>`; }).join('')}
   </div></div></div>`;
   const wrap = $('.boardwrap', main), canvas = $('.canvas', main);
@@ -1064,7 +1079,7 @@ function renderNotes(main) {
   for (const f of files) { const g = f.path.includes('/') ? f.path.split('/')[0] : 'other'; (groups[g] ||= []).push(f); }
   const order = ['notes', 'claude', 'chats', ...Object.keys(groups).filter(g => !['notes', 'claude', 'chats'].includes(g))];
   main.innerHTML = `<div class="notesview">${order.filter(g => groups[g]).map(g => `<h2 class="act"><span>${esc({ notes: 'Notes', claude: 'Claude instructions', chats: 'Claude chats', other: 'Other files' }[g] || g)}</span></h2>
-    ${groups[g].map(f => `<button class="beatrow" data-path="${esc(f.path)}" style="--lane:#9aa"><div class="t">${esc(f.path.split('/').slice(1).join('/') || f.path)}${f.dirty ? '<i class="dot"></i>' : ''}</div><div class="s">${esc((f.content || '').slice(0, 140))}</div></button>`).join('')}`).join('') || '<div class="empty"><p>No notes yet.</p></div>'}</div>
+    ${groups[g].map(f => `<button class="beatrow" data-path="${esc(f.path)}" style="--lane:#9aa"><div class="t">${esc(f.path.split('/').slice(1).join('/') || f.path)}${f.dirty ? '<i class="dot"></i>' : ''}</div><div class="s">${rich((f.content || '').slice(0, 160))}</div></button>`).join('')}`).join('') || '<div class="empty"><p>No notes yet.</p></div>'}</div>
     <button class="fab" id="newNote" aria-label="New note"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>`;
   main.querySelectorAll('[data-path]').forEach(b => b.onclick = () => openFile(b.dataset.path));
   $('#newNote', main).onclick = () => sheet(`<h3>New note</h3><form class="inline" id="nn"><input name="n" placeholder="Name, e.g. Timeline" required autofocus><button class="btn primary">Create</button></form>`, (el, close) => {
