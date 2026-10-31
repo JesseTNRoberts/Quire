@@ -2,6 +2,10 @@ name = "quire"
 main = "worker/index.js"
 compatibility_date = "2026-01-15"
 
+# Workers Logs: lets you see requests and errors in the dashboard (free plan included).
+[observability]
+enabled = true
+
 [assets]
 directory = "./public"
 binding = "ASSETS"
@@ -42,6 +46,9 @@ SNAPSHOT_MINUTES = "30"
 [env.mcp]
 name = "quire-mcp"
 workers_dev = true
+
+[env.mcp.observability]
+enabled = true
 
 [env.mcp.vars]
 ROLE = "mcp"
