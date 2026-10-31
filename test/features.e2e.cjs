@@ -26,8 +26,19 @@ const ok = m => console.log('  ✓ ' + m);
   const v = await val('notes');
   assert.ok(v.includes('==the lamp was relit==') && v.includes(`[[${second}]]`), 'markup stored');
   const shown = await p.$eval(q('notes') + ' .cm-content', el => [...el.querySelectorAll('.cm-line')].map(l => l.innerText).join('\n'));
-  assert.ok(shown.includes(`the lamp was relit. See ${second}`) && !shown.includes('[[') && !shown.includes('=='), 'markup hidden away from the cursor');
-  ok('live preview: markup stored, hidden when rendered');
+  assert.ok(shown.includes('the lamp was relit. See') && !shown.includes(second) && !shown.includes('[[') && !shown.includes('=='), 'markup hidden away from the cursor: ' + shown.slice(-80));
+  assert.ok(await p.$(q('notes') + ' .cm-wlmark[data-tip="→ ' + second + '"]'), 'a bare link shows only a link mark, with the target as its tip');
+  ok('live preview: markup stored, hidden when rendered; bare link = link mark');
+  // select your own words, tap Link, pick the target: your words stay, linked
+  await p.keyboard.type('\nAbby saw the lamp tower from the dunes.');
+  await p.evaluate(s => { const e = document.querySelector(s)._q, v = e.value, i = v.lastIndexOf('the lamp tower'); e.view.dispatch({ selection: { anchor: i, head: i + 14 } }); }, q('notes'));
+  await p.click('#mkLink'); await p.waitForSelector('#ac:not([hidden]) button'); await p.keyboard.type(second.slice(0, 5)); await p.waitForTimeout(150); await p.keyboard.press('Enter');
+  await p.keyboard.type(' Then'); await p.keyboard.press('Control+End'); await p.waitForTimeout(150);
+  const v2 = await val('notes');
+  assert.ok(v2.includes(`[[${second}|the lamp tower]] Then from the dunes.`) || v2.includes(`[[${second}|the lamp tower]]`), 'alias link written: ' + v2.slice(-90));
+  const shown2 = await p.$eval(q('notes') + ' .cm-content', el => [...el.querySelectorAll('.cm-line')].pop().innerText);
+  assert.ok(shown2.includes('the lamp tower') && !shown2.includes(second) && !shown2.includes('|'), 'your words shown, target hidden: ' + shown2);
+  ok('Link on selected words keeps your words and hides the target');
 
   // B. history and restore
   await p.waitForFunction(() => quire.book.pending() === 0, null, { timeout: 10000 });
@@ -55,20 +66,26 @@ const ok = m => console.log('  ✓ ' + m);
   await p.click('#bnX'); assert.ok(await p.$eval('#banner', e => e.hidden));
   ok('banner: stale backup and expiring key warnings, dismissible');
 
-  // D. start offline, write, reconnect
+  // D. offline. Chromium: start the app with no connection (service worker). WebKit in the test runner has no
+  // service workers (real Safari does), so there we go offline with the app open instead.
   await p.click('#edBack');
-  await p.evaluate(() => navigator.serviceWorker?.ready);
-  await p.reload(); await p.waitForSelector('.beatrow'); await p.waitForTimeout(500);
+  const cold = process.env.BROWSER !== 'webkit';
+  if (cold) {
+    await p.evaluate(() => navigator.serviceWorker?.ready);
+    await p.reload(); await p.waitForSelector('.beatrow'); await p.waitForTimeout(500);
+  }
   await ctx.setOffline(true);
-  await p.reload(); await p.waitForSelector('.beatrow', { timeout: 15000 });
-  ok('app opens with no connection');
+  if (cold) { await p.reload(); await p.waitForSelector('.beatrow', { timeout: 15000 }); ok('app opens with no connection'); }
+  else await p.evaluate(() => dispatchEvent(new Event('offline')));
   await p.locator('.beatrow').first().click(); await p.waitForSelector(q('beat') + ' .cm-content');
   await p.evaluate(s => { const e = document.querySelector(s)._q; e.focus(); e.setValue(e.value + '\nWritten offline.', (e.value + '\nWritten offline.').length); }, q('beat'));
-  await p.waitForTimeout(1800);
-  assert.match(await p.textContent('#status'), /Offline · 1 waiting/);
-  await p.reload(); await p.waitForSelector('.beatrow', { timeout: 15000 });
-  assert.match(await p.textContent('#status'), /waiting/);
-  ok('offline edit survives a reload while still offline');
+  await p.waitForFunction(() => /Offline|Not synced/.test(document.querySelector('#status').textContent) && quire.book.pending() > 0, null, { timeout: 15000 });
+  ok('offline edit kept on the device and waiting');
+  if (cold) {
+    await p.reload(); await p.waitForSelector('.beatrow', { timeout: 15000 });
+    assert.match(await p.textContent('#status'), /waiting/);
+    ok('offline edit survives a reload while still offline');
+  }
   await ctx.setOffline(false); await p.evaluate(() => dispatchEvent(new Event('online')));
   await p.waitForFunction(() => quire.book.pending() === 0, null, { timeout: 20000 });
   const server = await (await fetch(`${BASE}/api/book/${BOOK}/state?since=0`)).json();

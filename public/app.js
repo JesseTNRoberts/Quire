@@ -1,6 +1,6 @@
 // Quire app UI. Plain DOM, no build step.
 import { pickBackend } from './backend.js';
-import { EditorState, EditorView, ViewPlugin, Decoration, keymap, placeholder, history as cmHistory, historyKeymap, defaultKeymap, Prec } from './vendor/codemirror.js';
+import { EditorState, EditorView, ViewPlugin, Decoration, WidgetType, keymap, placeholder, history as cmHistory, historyKeymap, defaultKeymap, Prec } from './vendor/codemirror.js';
 import { Book } from './sync.js';
 import { actOf, laneOf, CARD, manuscript, wordCount, exportTree, laneGeom, laneIndexAt, fitInLane, MIN_LANE_H, LINK_RE, CRIT_RE, parseLink, findLinks, findCritical, renameLinks, fileName } from './format.js';
 
@@ -545,7 +545,11 @@ function rich(text) {
   for (const m of s.matchAll(re)) {
     parts.push(esc(s.slice(i, m.index)));
     if (m[1] !== undefined) parts.push(`<mark class="crit">${rich(m[1])}</mark>`);
-    else { const l = parseLink(m[2]); parts.push(`<span class="wl${resolveLink(l.target) ? '' : ' broken'}">${esc(l.alias || l.target)}</span>`); }
+    else {
+      const l = parseLink(m[2]), ok = !!resolveLink(l.target), tip = esc(ok ? '→ ' + l.target : 'No beat or note called “' + l.target + '”');
+      const markEl = `<span class="wlmark${ok ? '' : ' broken'}" data-tip="${tip}" title="${tip}">${LINK_SVG}</span>`;
+      parts.push(l.alias ? `<span class="wl${ok ? '' : ' broken'}" data-tip="${tip}">${esc(l.alias)}</span>${markEl}` : markEl);
+    }
     i = m.index + m[0].length;
   }
   parts.push(esc(s.slice(i)));
@@ -557,6 +561,17 @@ function rich(text) {
 // so they can still be edited. The class below gives each editor a small textarea-like interface
 // (value, selectionStart/End, focus) so the link, critical and autocomplete helpers work unchanged.
 const hideMark = Decoration.replace({});
+const LINK_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>';
+class LinkMark extends WidgetType {
+  constructor(target, ok, tip) { super(); this.target = target; this.ok = ok; this.tip = tip; }
+  eq(o) { return o.target === this.target && o.ok === this.ok; }
+  toDOM() {
+    const s = document.createElement('span');
+    s.className = 'cm-wlmark' + (this.ok ? '' : ' broken'); s.dataset.link = this.target; s.dataset.tip = this.tip;
+    s.setAttribute('aria-label', this.tip); s.innerHTML = LINK_SVG; return s;
+  }
+  ignoreEvent() { return false; }
+}
 function previewDecorations(view) {
   const text = view.state.doc.toString(), sel = view.state.selection.ranges, focus = view.hasFocus;
   const near = (a, b) => focus && sel.some(r => r.from <= b && r.to >= a);
@@ -567,14 +582,17 @@ function previewDecorations(view) {
     else { out.push(hideMark.range(a, a + 2), Decoration.mark({ class: 'cm-crit' }).range(a + 2, b - 2), hideMark.range(b - 2, b)); }
   }
   for (const m of text.matchAll(LINK_RE)) {
-    const a = m.index, b = a + m[0].length, l = parseLink(m[1]);
-    const attributes = { 'data-link': l.target, title: 'Link to ' + l.target };
-    const cls = 'cm-wl' + (resolveLink(l.target) ? '' : ' broken');
+    const a = m.index, b = a + m[0].length, l = parseLink(m[1]), ok = !!resolveLink(l.target);
+    const tip = ok ? '→ ' + l.target : 'No beat or note called “' + l.target + '”';
+    const attributes = { 'data-link': l.target, 'data-tip': tip };
+    const cls = 'cm-wl' + (ok ? '' : ' broken');
     if (near(a, b)) { out.push(Decoration.mark({ class: cls + ' cm-raw', attributes }).range(a, b)); continue; }
     const bar = m[1].indexOf('|');
-    let show = bar >= 0 ? a + 2 + bar + 1 : a + 2;
-    if (show >= b - 2) show = a + 2;
-    out.push(hideMark.range(a, show), Decoration.mark({ class: cls, attributes }).range(show, b - 2), hideMark.range(b - 2, b));
+    const mark = Decoration.replace({ widget: new LinkMark(l.target, ok, tip) });
+    if (l.alias && bar >= 0) {
+      // [[Target|your words]] -> your words + link mark
+      out.push(hideMark.range(a, a + 2 + bar + 1), Decoration.mark({ class: cls, attributes }).range(a + 2 + bar + 1, b - 2), mark.range(b - 2, b));
+    } else out.push(mark.range(a, b));   // [[Target]] -> just the link mark
   }
   return Decoration.set(out, true);
 }
@@ -608,7 +626,7 @@ class QEditor {
           Prec.highest(EditorView.domEventHandlers({ keydown: e => { acKey(e, self); return e.defaultPrevented; } })),
           EditorView.domEventHandlers({
             mousedown: e => {   // Cmd/Ctrl-click a rendered link to open it
-              const l = e.target.closest?.('.cm-wl');
+              const l = e.target.closest?.('.cm-wl, .cm-wlmark');
               if (l && (e.metaKey || e.ctrlKey)) { const t = resolveLink(l.dataset.link); if (t) { e.preventDefault(); setTimeout(() => openTarget(t)); return true; } }
               return false;
             },
@@ -681,7 +699,7 @@ function toggleCritical(ta) {
 function insertLink(ta) {
   if (!ta) return;
   const v = ta.value, s = ta.selectionStart, e = ta.selectionEnd, sel = v.slice(s, e);
-  if (sel) return editTa(ta, v.slice(0, s) + '[[' + sel + ']]' + v.slice(e), s + 2, s + 2 + sel.length);
+  if (sel) { editTa(ta, v.slice(0, s) + '[[|' + sel + ']]' + v.slice(e), s + 2); return autocomplete(ta); }   // your words stay; pick the target
   editTa(ta, v.slice(0, s) + '[[' + v.slice(e), s + 2);
   autocomplete(ta);
 }
@@ -707,9 +725,9 @@ function autocomplete(ta) {
 function acPick(i) {
   const st = acState; if (!st) return;
   const t = st.items[i], ta = st.ta, v = ta.value, p = ta.selectionStart;
-  const name = t.insert || t.label, close = v.slice(p).startsWith(']]') ? '' : ']]';
+  const name = t.insert || t.label, close = /^(\]\]|\|)/.test(v.slice(p)) ? '' : ']]';
   hideAc();
-  editTa(ta, v.slice(0, st.start) + name + close + v.slice(p), st.start + name.length + 2);
+  editTa(ta, v.slice(0, st.start) + name + close + v.slice(p), st.start + name.length + (close ? 2 : 0) + (v[p] === '|' ? v.slice(p).indexOf(']]') + 2 : 0));
 }
 function acKey(e, ta) {
   if (!acState || acState.ta !== ta) return;

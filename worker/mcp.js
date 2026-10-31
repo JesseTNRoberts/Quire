@@ -13,7 +13,7 @@ Rules (the book's own Claude instructions, returned by get_instructions, take pr
 2. Keep Jesse's words. Fix spelling only; never reword, stitch or abridge his text, and never rewrite drafted prose unless he asks.
 3. Discuss before acting. Before ANY write, say exactly what you will change and wait for a clear yes. In voice, read the change back briefly first.
 4. Your own suggestions go in the conversation, clearly marked; into the book only when agreed, labelled "Claude's suggestion (requested)" or [Proposed].
-5. ==text== marks a critical detail; [[Title]] links to a beat or note. Preserve this markup exactly. Never change, weaken or drop a critical detail without flagging it first.
+5. ==text== marks a critical detail; [[Title|words]] links words to a beat or note (shown as the words plus a link mark; a bare [[Title]] shows only the mark, so prefer the |words form when adding a link inside prose). Preserve this markup exactly. Never change, weaken or drop a critical detail without flagging it first.
 6. Processing a Claude adjust: give feedback and a plan, wait for agreement, execute, then use finish_adjust (it moves the adjust into the beat's notes and clears it), update affected synopses, and add a line to the changelog with append_to_note("Claude changelog").
 7. Never delete or retire anything unless Jesse explicitly asks.
 8. Writes can conflict with Jesse typing at the same time; on a conflict, re-read and redo the change, never overwrite.`;
