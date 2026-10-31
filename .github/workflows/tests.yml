@@ -1,0 +1,22 @@
+name: Tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Unit tests (format, migration, sign-in)
+        run: npm test
+      - name: Install browsers (Chrome's engine and Safari's engine)
+        run: npx playwright install --with-deps chromium webkit
+      - name: Browser + connector tests
+        run: BROWSERS="chromium webkit" bash test/e2e.sh

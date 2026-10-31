@@ -14,11 +14,17 @@ function headers(env, extra = {}) {
   };
 }
 
+// GitHub reports when a fine-grained token expires on every API response; remember it so Quire can warn early.
+let expiry = null;
+export const tokenExpiry = () => expiry;
+
 async function gh(env, method, path, body) {
   const r = await fetch(api(env) + path, {
     method, headers: headers(env, body ? { 'Content-Type': 'application/json' } : {}),
     body: body ? JSON.stringify(body) : undefined,
   });
+  const exp = r.headers.get('github-authentication-token-expiration');
+  if (exp) { const t = Date.parse(exp.replace(' UTC', 'Z').replace(' ', 'T')); if (t) expiry = t; }
   if (!r.ok) {
     const t = await r.text();
     throw new Error(`GitHub ${method} ${path} failed (${r.status}): ${t.slice(0, 300)}`);

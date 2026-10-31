@@ -332,3 +332,15 @@ mark.crit { background: color-mix(in srgb, var(--accent) 22%, transparent); colo
 .cm-wl.broken { color: var(--bad); text-decoration-style: dashed; }
 @media (prefers-color-scheme: dark) { .cm-wl { color: #9DB8E6; } }
 @media (min-width: 1200px) { .qed.prose .cm-content { font-size: calc(19px * var(--efs, 1)); } }
+
+/* ---------- history + backup banner ---------- */
+.hist .item { justify-content: space-between; }
+.hist .item small { color: var(--muted); font-size: 13px; }
+.histview { max-height: 55vh; overflow: auto; border: 1px solid var(--line); border-radius: 12px; padding: 4px 14px 12px; margin: 8px 0 12px; background: var(--paper); }
+.histview h4 { margin: 12px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.histtext { font: 16px/1.55 var(--prose); white-space: normal; }
+p.small { font-size: 13px; }
+.banner { grid-area: main; align-self: start; z-index: 6; margin: 8px 12px 0; padding: 10px 12px; display: flex; gap: 10px; align-items: center; background: color-mix(in srgb, var(--warn) 16%, var(--card)); border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent); border-radius: 12px; font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.1); }
+.banner span { flex: 1; }
+.banner .link { white-space: nowrap; }
+.banner .x { width: 30px; height: 30px; font-size: 20px; }

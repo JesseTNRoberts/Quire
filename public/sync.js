@@ -159,7 +159,8 @@ export class Book extends EventTarget {
     this.pushing = true; this.setStatus('saving');
     let retry = false;
     try {
-      const { results, seq } = await this.backend.ops(this.slug, { ops, client: this.client });
+      const checkpoint = !!this.checkpoint; this.checkpoint = false;
+      const { results, seq } = await this.backend.ops(this.slug, { ops, client: this.client, device: deviceLabel(), checkpoint });
       results.forEach((r, i) => { if (this.applyResult(refs[i], ops[i], r)) retry = true; });
       // Our own writes advance seq; if anything else happened in between, fetch it.
       if (seq === this.seq + results.filter(r => r.ok).length) this.seq = seq; else this.pull();
@@ -241,7 +242,7 @@ export class Book extends EventTarget {
       }
       if (st.board && st.board.rev !== this.board.server?.rev) { this.board.kind = 'board'; this.board.id = 'board'; this.mergeRemote(this.board, st.board); }
       this.seq = st.seq;
-      this.meta = { title: st.title, source: st.source, target: st.target, snapshot: st.snapshot, dirty: st.dirty, empty: st.empty };
+      this.meta = { title: st.title, source: st.source, target: st.target, snapshot: st.snapshot, dirty: st.dirty, empty: st.empty, dirtySince: st.dirtySince, tokenExpires: st.tokenExpires };
       this.saveMeta();
       this.emit({ remote: touched });
       if (this.status === 'loading' || this.status === 'offline' || this.status === 'error') this.setStatus(this.pending() ? 'saving' : 'synced');
@@ -264,3 +265,12 @@ export class Book extends EventTarget {
 // Per-tab client id, so two tabs (or two devices) see each other's edits.
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch { return null; } }
 function sessionStorageSet(k, v) { try { sessionStorage.setItem(k, v); } catch {} }
+
+// "iPhone · Quire app", "Mac · Safari"… shown in version history.
+export function deviceLabel() {
+  const ua = navigator.userAgent;
+  const dev = /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iPad' : /iPhone/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'Computer';
+  const app = matchMedia?.('(display-mode: standalone)').matches || navigator.standalone;
+  const br = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) || /CriOS/.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'browser';
+  return `${dev} · ${app ? 'Quire app' : br}`;
+}

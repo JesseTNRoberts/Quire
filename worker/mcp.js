@@ -29,10 +29,10 @@ async function pickBook(env, slug) {
 const stubFor = (env, slug) => env.PROJECT.get(env.PROJECT.idFromName(slug));
 async function load(env, slug) {
   const st = await (await stubFor(env, slug).fetch('https://book/state?since=0')).json();
-  return { slug, title: st.title, beats: st.beats, files: st.files.filter(f => !f.deleted), board: st.board?.data || {}, boardRev: st.board?.rev || 0 };
+  return { slug, meta: st, title: st.title, beats: st.beats, files: st.files.filter(f => !f.deleted), board: st.board?.data || {}, boardRev: st.board?.rev || 0 };
 }
-async function ops(env, slug, list) {
-  const r = await (await stubFor(env, slug).fetch('https://book/ops', { method: 'POST', body: JSON.stringify({ client: 'claude-connector', ops: list }) })).json();
+async function ops(env, slug, list, checkpoint = false) {
+  const r = await (await stubFor(env, slug).fetch('https://book/ops', { method: 'POST', body: JSON.stringify({ client: 'claude-connector', ops: list, checkpoint }) })).json();
   if (r.error) throw new Error(r.error);
   return r.results;
 }
@@ -103,6 +103,9 @@ const TOOLS = [
       const live = b.beats.filter(x => !x.deleted);
       return { book: b.title, beats: live.length, words: live.reduce((n, x) => n + words(x.beat), 0), waiting_adjusts: live.filter(x => x.adjust.trim()).map(x => x.title),
         critical_details: live.reduce((n, x) => n + ['synopsis', 'beat', 'notes'].reduce((k, f) => k + findCritical(x[f]).length, 0), 0),
+        backup: (m => ({ github_repo: m.target ? `${m.target.owner}/${m.target.repo}` : 'NOT SET (tell Jesse)', last_snapshot: m.snapshot?.at ? new Date(m.snapshot.at).toISOString() : null,
+          problem: m.snapshot?.error && (!m.snapshot.at || m.snapshot.failedAt > m.snapshot.at) ? m.snapshot.error : m.dirtySince && Date.now() - m.dirtySince > 2 * 3600e3 ? 'No GitHub backup for over 2 hours' : null,
+          github_key_expires: m.tokenExpires ? new Date(m.tokenExpires).toISOString().slice(0, 10) : null }))(b.meta),
         connector_rules: INSTRUCTIONS, book_rules: rules || '(none in the book; follow connector_rules)', plot_spine_latest: spine ? clip(spine.content, 5000) : null }; } },
 
   { name: 'list_books', title: 'List books', annotations: RO, description: 'List the books in Quire.', inputSchema: { type: 'object', properties: {} }, run: async env => books(env) },
@@ -201,6 +204,24 @@ const TOOLS = [
   { name: 'append_to_note', title: 'Add to a note', annotations: RW, description: 'Append text to a note (created if it doesn’t exist), e.g. a changelog line to "Claude changelog" or a fact to a character note.', inputSchema: S({ note: { type: 'string' }, text: { type: 'string' }, dated: { type: 'boolean', description: 'Prefix with today’s date heading' } }, ['note', 'text']),
     run: async (env, a) => { const b = await load(env, (await pickBook(env, a.book)).slug), f = findNote(b, a.note, true);
       await writeNote(env, b, f, appendBlock(f.content, a.dated ? `${today()}:` : '', a.text)); return { saved: true, note: fileName(f.path), created: f.created || undefined }; } },
+
+  { name: 'list_versions', title: 'Version history', annotations: RO, description: 'Earlier versions of a beat or note (newest first): when, and by which device or Claude. Use to undo a change.', inputSchema: S({ beat: { type: 'string' }, note: { type: 'string' } }),
+    run: async (env, a) => { const slug = (await pickBook(env, a.book)).slug, b = await load(env, slug);
+      const [kind, key, label] = a.note ? ['file', findNote(b, a.note).path, a.note] : ['beat', findBeat(b, a.beat).id, findBeat(b, a.beat).title];
+      const rows = await (await stubFor(env, slug).fetch(`https://book/history?kind=${kind}&key=${encodeURIComponent(key)}`)).json();
+      return { of: label, versions: rows.map((r, i) => ({ version: r.id, when: new Date(r.at).toISOString(), by: r.label, current: i === 0 || undefined })) }; } },
+
+  { name: 'restore_version', title: 'Restore a version', annotations: RW, description: 'Put a beat or note back to an earlier version from list_versions. Only after Jesse agrees. The version it replaces stays in history.', inputSchema: S({ beat: { type: 'string' }, note: { type: 'string' }, version: { type: 'number' } }, ['version']),
+    run: async (env, a) => { const slug = (await pickBook(env, a.book)).slug, b = await load(env, slug);
+      const v = await (await stubFor(env, slug).fetch(`https://book/history/item?id=${a.version}`)).json();
+      if (v.error) throw new Error(v.error);
+      if (a.note) { const f = findNote(b, a.note); if (v.kind !== 'file' || v.key !== f.path) throw new Error('That version belongs to something else.');
+        const [r] = await ops(env, slug, [{ type: 'file', path: f.path, baseRev: f.rev, content: v.data.content || '' }], true); if (r.conflict) throw new Error('The note changed a moment ago; list versions again.'); return { restored: true, note: fileName(f.path), from: new Date(v.at).toISOString() }; }
+      const x = findBeat(b, a.beat); if (v.kind !== 'beat' || v.key !== x.id) throw new Error('That version belongs to a different beat.');
+      const { title, synopsis, adjust, beat, notes } = v.data;
+      const [r] = await ops(env, slug, [{ type: 'beat', id: x.id, baseRev: x.rev, fields: { title, synopsis, adjust, beat, notes } }], true);
+      if (r.conflict) throw new Error('The beat changed a moment ago; list versions again.');
+      return { restored: true, beat: title, from: new Date(v.at).toISOString() }; } },
 
   { name: 'snapshot', title: 'Save to GitHub now', annotations: { ...RW, openWorldHint: true }, description: 'Commit the book to its GitHub archive now (it also happens automatically every ~30 minutes).', inputSchema: S({}),
     run: async (env, a) => (await stubFor(env, (await pickBook(env, a.book)).slug).fetch('https://book/snapshot', { method: 'POST' })).json() },

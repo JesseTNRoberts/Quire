@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 const [, , dir, port = 8799] = process.argv;
 const commits = [];
 let head = 'c0ffee0', tree = 't0';
-const send = (res, code, body, type = 'application/json') => { res.writeHead(code, { 'Content-Type': type }); res.end(type === 'application/json' ? JSON.stringify(body) : body); };
+const send = (res, code, body, type = 'application/json') => { res.writeHead(code, { 'Content-Type': type, 'github-authentication-token-expiration': process.env.MOCK_TOKEN_EXPIRY || '2027-10-30 12:00:00 UTC' }); res.end(type === 'application/json' ? JSON.stringify(body) : body); };
 http.createServer(async (req, res) => {
   let body = ''; for await (const c of req) body += c;
   const u = req.url;

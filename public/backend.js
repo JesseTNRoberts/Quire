@@ -26,6 +26,8 @@ export class HttpBackend {
   importRepo(slug, o) { return this.req(`/book/${slug}/import`, { method: 'POST', body: JSON.stringify(o) }); }
   config(slug, o) { return this.req(`/book/${slug}/config`, { method: 'POST', body: JSON.stringify(o) }); }
   snapshot(slug) { return this.req(`/book/${slug}/snapshot`, { method: 'POST' }); }
+  history(slug, kind, key) { return this.req(`/book/${slug}/history?kind=${encodeURIComponent(kind)}&key=${encodeURIComponent(key)}`); }
+  historyItem(slug, id) { return this.req(`/book/${slug}/history/item?id=${encodeURIComponent(id)}`); }
   subscribe(slug, cb) {
     let ws, stopped = false, delay = 1000, ping, first = true;
     const connect = () => {
@@ -134,6 +136,8 @@ export class DemoBackend {
     this.persist(); this.send({ type: 'meta', meta: this.meta(b), slug });
     return { sha: b.snapshot.sha, files };
   }
+  async history() { await this.net(); return []; }
+  async historyItem() { return { error: 'Version history needs the live app.' }; }
   subscribe(slug, cb) { const f = m => (!m.slug || m.slug === slug) && cb(m); this.subs.add(f); return () => this.subs.delete(f); }
 
   // Demo helper: pretend your Mac edited a beat.

@@ -14,7 +14,7 @@ const S = { view: ls.get('quire-view', 'book'), openId: null, openFile: null, ta
 let book, backend, me;
 S.linkFrom = null;
 S.showWiki = ls.get('quire-wiki', false);
-window.quire = { S, get book() { return book; }, get backend() { return backend; } }; // for debugging from the console
+window.quire = { S, get book() { return book; }, get backend() { return backend; }, renderBanner: () => renderBanner() }; // for debugging from the console
 
 // ---------------- boot ----------------
 (async function boot() {
@@ -26,6 +26,8 @@ window.quire = { S, get book() { return book; }, get backend() { return backend;
   if (!S.slug) { S.slug = 'my-novel'; try { await backend.createBook('my-novel', 'My novel'); } catch {} S.view = 'settings'; }
   await openBook(S.slug);
   if ('serviceWorker' in navigator && backend.kind === 'live') navigator.serviceWorker.register('sw.js').catch(() => {});
+  if (backend.kind === 'live') keepStorage().then(r => S.storage = r);
+  setInterval(renderBanner, 5 * 60_000);
   setInterval(watchdog, 30000);
 })();
 
@@ -72,6 +74,7 @@ function renderMain(fresh) {
 
 function renderStatus() {
   if (!book) return;
+  renderBanner();
   const el = $('#status'), n = book.pending(), c = book.conflicts().length;
   let s = book.status, label = { loading: 'Loading', synced: 'Synced', saving: 'Saving', offline: 'Offline', error: 'Not synced', conflict: 'Needs your choice' }[s] || s;
   if (c) { s = 'conflict'; label = 'Needs your choice'; }
@@ -202,6 +205,82 @@ function renderBook(main, fresh) {
     list.onclick = e => { if (Date.now() - (list._dragEnd || 0) < 400) return; const r = e.target.closest('.beatrow'); if (r) openBeat(r.dataset.id); };
     setupReorder(list, main);
   }
+}
+
+// ---------------- version history ----------------
+const when = t => { const d = new Date(t), now = new Date(), same = d.toDateString() === now.toDateString();
+  const y = new Date(now - 864e5).toDateString() === d.toDateString();
+  return (same ? 'Today' : y ? 'Yesterday' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' })) + ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); };
+
+async function historySheet(kind, key, label) {
+  if (backend.kind === 'demo') return toast('Version history works in the live app, not the demo.');
+  let rows;
+  try { rows = await backend.history(S.slug, kind, key); } catch (e) { return toast(e.offline ? 'History needs a connection.' : e.message, 4000); }
+  sheet(`<h3>History · ${esc(label)}</h3>
+    <p class="muted">Every saved version, newest first. Edits from one device within 10 minutes count as one version. Kept for 90 days (the latest 10 always).</p>
+    <div class="list hist">${rows.length ? rows.map((r, i) => `<button class="item" data-id="${r.id}"><span>${when(r.at)}${i === 0 ? ' <em class="badge">current</em>' : ''}</span><small>${esc(r.label)}</small></button>`).join('') : '<p class="muted">No versions recorded yet. Versions start with the next change.</p>'}</div>
+    <button class="btn" data-close>Close</button>`, (el, close) => {
+    el.querySelectorAll('[data-id]').forEach(b => b.onclick = () => { close(); historyVersion(kind, key, label, +b.dataset.id); });
+  });
+}
+
+async function historyVersion(kind, key, label, id) {
+  let v;
+  try { v = await backend.historyItem(S.slug, id); } catch (e) { return toast(e.offline ? 'History needs a connection.' : e.message, 4000); }
+  if (v.error) return toast(v.error);
+  const d = v.data || {};
+  const block = (name, text) => text ? `<h4>${name}</h4><div class="histtext">${rich(text).replace(/\n/g, '<br>')}</div>` : '';
+  const body = kind === 'beat' ? `<h4>Title</h4><div class="histtext">${esc(d.title)}</div>${block('Synopsis', d.synopsis)}${block('Beat', d.beat)}${block('Claude adjust', d.adjust)}${block('Notes', d.notes)}${d.deleted ? '<p class="bad">This version was retired.</p>' : ''}`
+    : kind === 'file' ? block('Note', d.content) || '<p class="muted">(empty)</p>'
+    : `<p>${Object.keys(d.beats || {}).length} beats on the board, ${(d.acts || []).length} acts, ${(d.lanes || []).length} streams.</p>`;
+  sheet(`<h3>${esc(label)}</h3><p class="muted">${when(v.at)} · ${esc(v.label)}</p><div class="histview">${body}</div>
+    <div class="row-btns"><button class="btn primary" id="hRestore">Restore this version</button><button class="btn" id="hBack">Back</button></div>
+    <p class="muted small">Restoring saves this version as the newest one. What you have now stays in History, so you can always go back.</p>`, (el, close) => {
+    $('#hBack', el).onclick = () => { close(); historySheet(kind, key, label); };
+    $('#hRestore', el).onclick = e => {
+      if (!confirmTwice(e.target)) return;
+      book.checkpoint = true;
+      if (kind === 'beat') { const { title, synopsis, adjust, beat, notes } = d; book.edit(key, { title, synopsis, adjust, beat, notes }); if (S.openId === key) { S.origTitle = title; openBeat(key); } }
+      else if (kind === 'file') { book.editFile(key, d.content || ''); if (S.openFile === key) openFile(key); }
+      else book.editBoard(bd => { for (const k of Object.keys(bd)) delete bd[k]; Object.assign(bd, JSON.parse(JSON.stringify(d))); });
+      book.pushNow(); close(); toast('Restored. The version it replaced is in History.', 3500);
+    };
+  });
+}
+
+// ---------------- backup health banner ----------------
+function backupProblems() {
+  const m = book?.meta || {}, now = Date.now(), out = [];
+  if (backend.kind !== 'live' || !book) return out;
+  if (!m.target && book.beats.size) out.push({ k: 'target', text: 'This book isn’t being backed up to GitHub. Set the archive repo in Settings.', act: 'settings' });
+  else if (m.snapshot?.error && (!m.snapshot.at || m.snapshot.failedAt > m.snapshot.at)) out.push({ k: 'err', text: `GitHub backup is failing: ${m.snapshot.error.slice(0, 140)}. Your writing is safe in Quire; the archive just isn’t being updated.`, act: 'status' });
+  else if (m.dirtySince && now - m.dirtySince > 2 * 3600e3) out.push({ k: 'stale', text: `No GitHub backup for ${Math.round((now - m.dirtySince) / 3600e3)} hours. Your writing is safe in Quire.`, act: 'status' });
+  if (m.tokenExpires) {
+    const days = Math.floor((m.tokenExpires - now) / 864e5);
+    if (days < 21) out.push({ k: 'token', text: days < 0 ? 'The GitHub key Quire uses has expired, so backups have stopped. Make a new one and put it in Cloudflare as GITHUB_TOKEN.' : `The GitHub key Quire uses expires in ${days} day${days === 1 ? '' : 's'} (${new Date(m.tokenExpires).toLocaleDateString()}). Renew it on GitHub, then update GITHUB_TOKEN in Cloudflare.`, act: 'token' });
+  }
+  return out;
+}
+function renderBanner() {
+  const el = $('#banner'); if (!el) return;
+  const dismissed = ls.get('quire-banner-dismissed', {});
+  const p = backupProblems().filter(x => !(dismissed[x.k] && Date.now() - dismissed[x.k] < 12 * 3600e3));
+  if (!p.length) { el.hidden = true; return; }
+  const x = p[0];
+  el.hidden = false; el.dataset.k = x.k;
+  el.innerHTML = `<span>⚠︎ ${esc(x.text)}</span><button class="link" id="bnGo">${x.act === 'settings' ? 'Settings' : x.act === 'token' ? 'Renew' : 'Details'}</button><button class="icon x" id="bnX" aria-label="Hide for now">×</button>`;
+  $('#bnGo').onclick = () => x.act === 'settings' ? setView('settings') : x.act === 'token' ? window.open('https://github.com/settings/personal-access-tokens', '_blank') : statusSheet();
+  $('#bnX').onclick = () => { dismissed[x.k] = Date.now(); ls.set('quire-banner-dismissed', dismissed); el.hidden = true; };
+}
+
+// ---------------- keep this device's copy ----------------
+// Ask the browser not to clear Quire's storage (iPhones can clear website data that isn't used for a while).
+async function keepStorage() {
+  try {
+    if (!navigator.storage?.persist) return 'unsupported';
+    if (await navigator.storage.persisted()) return 'kept';
+    return (await navigator.storage.persist()) ? 'kept' : 'not-granted';
+  } catch { return 'unsupported'; }
 }
 
 // ---------------- reorder in the Book list (press and hold, like moving an app on an iPhone) ----------------
@@ -734,6 +813,7 @@ function beatMenu(id) {
     <button class="item" data-a="lane">Move to stream…</button>
     <button class="item" data-a="tags">Tags…</button>
     <button class="item" data-a="insert">New beat after this one</button>
+    <button class="item" data-a="history">History…</button>
     <button class="item danger" data-a="retire">${b.deleted ? 'Restore beat' : 'Retire beat'}</button></div>
     <button class="btn" data-close>Close</button>`, (el, close) => {
     el.querySelectorAll('[data-a]').forEach(x => x.onclick = () => {
@@ -742,6 +822,7 @@ function beatMenu(id) {
       if (a === 'lane') pickLane(id);
       if (a === 'tags') pickTags(id);
       if (a === 'insert') openBeat(book.createBeat({}, id), true);
+      if (a === 'history') historySheet('beat', id, b.title);
       if (a === 'retire') { book.retire(id, !b.deleted); if (!b.deleted) { toast('Beat retired. Find it under the Retired filter.'); closeEditor(); } else editorMeta(); }
     });
   });
@@ -1146,7 +1227,7 @@ function openFile(path) {
   const f = book.file(path); if (!f) return;
   S.openFile = path; S.openId = null;
   const ed = $('#editor'), wasOpen = !ed.hidden; ed.hidden = false; ed.dataset.kind = 'file'; document.body.classList.add('editing');
-  ed.innerHTML = `<div class="edhead"><button class="icon" id="edBack" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><div class="title static">${esc(path)}</div><button class="icon" id="edDel" aria-label="Delete note"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg></button></div>
+  ed.innerHTML = `<div class="edhead"><button class="icon" id="edBack" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><div class="title static">${esc(path)}</div><button class="icon" id="edHist" aria-label="History"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></button><button class="icon" id="edDel" aria-label="Delete note"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg></button></div>
     <div class="edbody"><div class="qed prose"></div><div class="ac" id="ac" hidden></div></div>
     <div class="edlinks" id="edLinks"></div>
     <div class="edfoot"><span></span><span class="efs"><button data-efs="-1" aria-label="Smaller text">A−</button><span id="efsv"></span><button data-efs="1" aria-label="Larger text">A+</button></span><span id="edSaved"></span></div>`;
@@ -1154,6 +1235,7 @@ function openFile(path) {
   applyEfs(); ed.querySelectorAll('[data-efs]').forEach(b => b.onclick = () => applyEfs(+b.dataset.efs));
   linkStrip();
   $('#edBack').onclick = closeEditor;
+  $('#edHist').onclick = () => historySheet('file', path, fileName(path));
   $('#edDel').onclick = () => { if (confirmTwice($('#edDel'))) { book.editFile(path, f.content || '', true); closeEditor(); toast('Note removed. It stays in the GitHub history.'); } };
   history[wasOpen ? 'replaceState' : 'pushState']({ beat: path }, '');
 }
@@ -1190,6 +1272,10 @@ function renderSettings(main) {
         <label class="check span2"><input type="checkbox" name="force"> Replace this book’s current content</label>
         <div class="row-btns span2"><button class="btn primary">Import</button></div></form>
       ${backend.kind === 'demo' ? '<p class="muted">In the demo, importing loads the sample novel again, or pick a folder from your computer: <input type="file" id="dFolder" webkitdirectory multiple></p>' : ''}</section>
+    <section class="card"><h3>Safety</h3>
+      <p class="muted">Every change is kept in version history for 90 days: a beat's ⋯ menu or a note's clock button shows it. GitHub gets a copy of the whole book about every ${(m => m === 1 ? 'minute' : m + ' minutes')(me.snapshotMinutes || 30)}${m.tokenExpires ? `; the GitHub key expires on ${new Date(m.tokenExpires).toLocaleDateString()}` : ''}.</p>
+      <p class="muted">This device: ${{ kept: 'Quire’s copy is kept permanently, so you can write offline.', 'not-granted': 'the browser may clear Quire’s copy if unused for weeks. On iPhone, add Quire to the Home Screen to keep it.', unsupported: 'the browser decides how long to keep Quire’s copy.' }[S.storage] || 'checking…'}</p>
+      <div class="row-btns"><button class="btn" id="boardHist">Board layout history…</button></div></section>
     <section class="card"><h3>Export</h3>
       <div class="row-btns"><button class="btn" id="exMs">Manuscript (.md)</button><button class="btn" id="exOut">Outline of synopses (.md)</button><button class="btn" id="exZip">Whole book as repo (.zip)</button></div>
       <p class="muted">For Word or EPUB, run the <b>Compile manuscript</b> action in the GitHub repo.</p></section>
@@ -1200,6 +1286,7 @@ function renderSettings(main) {
   $('#fTarget').onsubmit = e => { e.preventDefault(); const f = new FormData(e.target); busy($('#fTarget button'), async () => { const target = f.get('repo') ? Object.fromEntries(f) : null; await backend.config(S.slug, { target }); await book.pull(); renderSettings(main); toast('Archive repo saved'); }); };
   $('#snapNow').onclick = e => busy(e.target, async () => { await book.pushNow(); const r = await backend.snapshot(S.slug); await book.pull(); renderSettings(main); toast(r.skipped || (r.files ? `Snapshot committed: ${r.files} file${r.files > 1 ? 's' : ''}` : 'Nothing new to snapshot')); });
   $('#fImport').onsubmit = e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); f.force = !!f.force; busy($('#fImport .primary'), async () => { const r = await backend.importRepo(S.slug, f); await book.pull(true); setView('book'); toast(`Imported ${r.beats} beats and ${r.files} files (${r.layout})`, 4000); }); };
+  $('#boardHist').onclick = () => historySheet('board', 'board', 'Board layout');
   $('#exMs').onclick = () => download(`${book.title()}.md`, manuscript(project()));
   $('#exOut').onclick = () => download(`${book.title()} outline.md`, manuscript(project(), { include: 'synopsis' }));
   $('#exZip').onclick = () => download(`${book.title()}.zip`, zip(exportTree(project())), 'application/zip');
