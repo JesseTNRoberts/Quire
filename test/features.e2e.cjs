@@ -77,7 +77,7 @@ const ok = m => console.log('  ✓ ' + m);
   await ctx.setOffline(true);
   if (cold) { await p.reload(); await p.waitForSelector('.beatrow', { timeout: 15000 }); ok('app opens with no connection'); }
   else await p.evaluate(() => dispatchEvent(new Event('offline')));
-  await p.locator('.beatrow').first().click(); await p.waitForSelector(q('beat') + ' .cm-content');
+  await p.locator('.beatrow').first().click(); await p.click('[data-tab=beat]'); await p.waitForSelector(q('beat') + ' .cm-content');
   await p.evaluate(s => { const e = document.querySelector(s)._q; e.focus(); e.setValue(e.value + '\nWritten offline.', (e.value + '\nWritten offline.').length); }, q('beat'));
   await p.waitForFunction(() => /Offline|Not synced/.test(document.querySelector('#status').textContent) && quire.book.pending() > 0, null, { timeout: 15000 });
   ok('offline edit kept on the device and waiting');
