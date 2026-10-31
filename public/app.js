@@ -590,8 +590,10 @@ function previewDecorations(view) {
     const tip = ok ? '→ ' + l.target : 'No beat or note called “' + l.target + '”';
     const attributes = { 'data-link': l.target, 'data-tip': tip };
     const cls = 'cm-wl' + (ok ? '' : ' broken');
-    if (near(a, b)) { out.push(Decoration.mark({ class: cls + ' cm-raw', attributes }).range(a, b)); continue; }
     const bar = m[1].indexOf('|');
+    // A bare link is only a small mark, so a cursor right beside it (one character either side) also opens it up for editing.
+    const pad = l.alias && bar >= 0 ? 0 : 1;
+    if (near(Math.max(0, a - pad), b + pad)) { out.push(Decoration.mark({ class: cls + ' cm-raw', attributes }).range(a, b)); continue; }
     const mark = Decoration.replace({ widget: new LinkMark(l.target, ok, tip) });
     if (l.alias && bar >= 0) {
       // [[Target|your words]] -> your words + link mark
