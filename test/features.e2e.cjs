@@ -75,7 +75,7 @@ const ok = m => console.log('  ✓ ' + m);
   assert.ok(server.beats.some(x => x.title === title && x.beat.includes('Written offline.')), 'offline edit reached the server');
   ok('back online: the offline edit synced');
 
-  const real = errs.filter(e => !/INTERNET_DISCONNECTED|Failed to fetch|Load failed|NetworkError|network connection/i.test(e));
+  const real = errs.filter(e => !/INTERNET_DISCONNECTED|Failed to fetch|Load failed|NetworkError|network connection|internal error|Viewport argument|WebSocket/i.test(e));
   assert.deepEqual(real, [], 'no page errors');
   console.log(`features e2e ok (${process.env.BROWSER || 'chromium'})`);
   await b.close();

@@ -23,7 +23,7 @@ export default {
         const r = await handleOAuth(request, env, url.origin); if (r) return r;
       }
       // The connector also answers at its root, in case it was added without /mcp.
-      if (path === '/' && !(request.method === 'GET' && (request.headers.get('accept') || '').includes('text/html')))
+      if (role === 'mcp' && path === '/' && !(request.method === 'GET' && (request.headers.get('accept') || '').includes('text/html')))
         return handleMcp(request, env, url.origin, '');
     }
     if (role === 'mcp') {

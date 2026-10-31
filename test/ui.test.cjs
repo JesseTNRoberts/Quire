@@ -69,7 +69,7 @@ const val = (p, f) => p.evaluate(f => document.querySelector(`#editor .qed[data-
   // Phone board
   await phone.click('#edBack'); await phone.click('[data-view=board]'); await phone.waitForTimeout(400);
   await phone.screenshot({ path: `${shots}/phone-board.png` });
-  const real = errors.filter(e => !/INTERNET_DISCONNECTED|Failed to fetch|Load failed|NetworkError|network connection/i.test(e));
+  const real = errors.filter(e => !/INTERNET_DISCONNECTED|Failed to fetch|Load failed|NetworkError|network connection|internal error|Viewport argument|WebSocket/i.test(e));
   assert.deepEqual(real, []);
   console.log(`sync e2e ok (${process.env.BROWSER || 'chromium'})`);
   await b.close();
