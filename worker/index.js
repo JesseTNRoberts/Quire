@@ -14,14 +14,21 @@ export default {
     // In local development both roles run in one worker.
     const role = env.ROLE || 'app', mcpOn = role === 'mcp' || env.DEV_NO_AUTH === '1';
     if (mcpOn) {
-      if (url.pathname === '/mcp') return handleMcp(request, env, url.origin);
-      if (url.pathname.startsWith('/oauth/') || url.pathname.startsWith('/.well-known/')) {
+      // Standard default endpoint names (used by clients that skip discovery) map onto ours.
+      const alias = { '/authorize': '/oauth/authorize', '/token': '/oauth/token', '/register': '/oauth/register' }[url.pathname];
+      if (alias) { const u = new URL(request.url); u.pathname = alias; request = new Request(u, request); }
+      const path = alias || url.pathname;
+      if (path === '/mcp') return handleMcp(request, env, url.origin, '/mcp');
+      if (path.startsWith('/oauth/') || path.startsWith('/.well-known/')) {
         const r = await handleOAuth(request, env, url.origin); if (r) return r;
       }
+      // The connector also answers at its root, in case it was added without /mcp.
+      if (path === '/' && !(request.method === 'GET' && (request.headers.get('accept') || '').includes('text/html')))
+        return handleMcp(request, env, url.origin, '');
     }
     if (role === 'mcp') {
       if (url.pathname.startsWith('/icons/')) return env.ASSETS ? env.ASSETS.fetch(request) : new Response('', { status: 404 });
-      return new Response('Quire connector. Add this address + /mcp as a custom connector in Claude.', { status: url.pathname === '/' ? 200 : 404 });
+      return new Response('Quire connector. In Claude, add ' + url.origin + '/mcp as a custom connector (no OAuth client ID or secret needed).', { status: url.pathname === '/' ? 200 : 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
     }
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
 

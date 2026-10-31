@@ -207,9 +207,9 @@ const TOOLS = [
 ];
 
 // ---------------- protocol ----------------
-export async function handleMcp(request, env, origin) {
+export async function handleMcp(request, env, origin, at = '/mcp') {
   if (request.method === 'OPTIONS') return cors();
-  const challenge = { 'WWW-Authenticate': `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"` };
+  const challenge = { 'WWW-Authenticate': `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource${at}"` };
   const auth = request.headers.get('authorization') || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
   const who = token && await authStore(env).check(token);

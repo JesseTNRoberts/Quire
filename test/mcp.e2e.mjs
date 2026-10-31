@@ -1,10 +1,10 @@
 // End-to-end: OAuth (discovery, registration, approve, PKCE exchange, refresh) and MCP tools, against `wrangler dev`.
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-const B = process.argv[2] || 'http://127.0.0.1:8787';
+const B = process.argv[2] || 'http://127.0.0.1:8787', MCP = process.argv[3] ?? '/mcp';
 const j = async (r) => { const t = await r.text(); try { return JSON.parse(t); } catch { return t; } };
 // 1. unauthenticated MCP -> 401 with resource metadata
-let r = await fetch(B + '/mcp', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+let r = await fetch(B + MCP, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
 assert.equal(r.status, 401); const wa = r.headers.get('www-authenticate'); assert.match(wa, /resource_metadata=/);
 const prm = await j(await fetch(wa.match(/"(.+)"/)[1])); const as = await j(await fetch(prm.authorization_servers[0] + '/.well-known/oauth-authorization-server'));
 // 2. register
@@ -32,7 +32,7 @@ assert.ok(t2.access_token); const tok = t2.access_token;
 console.log('oauth ok');
 // 4. MCP
 let id = 0;
-const rpc = async (method, params) => { const res = await j(await fetch(B + '/mcp', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok, accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }) })); if (res.error) throw new Error(JSON.stringify(res.error)); return res.result; };
+const rpc = async (method, params) => { const res = await j(await fetch(B + MCP, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok, accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }) })); if (res.error) throw new Error(JSON.stringify(res.error)); return res.result; };
 const call = async (name, args = {}) => { const r = await rpc('tools/call', { name, arguments: args }); const txt = r.content[0].text; if (r.isError) return { error: txt }; try { return JSON.parse(txt); } catch { return txt; } };
 const init = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
 assert.equal(init.protocolVersion, '2025-06-18'); assert.match(init.instructions, /get_instructions/);

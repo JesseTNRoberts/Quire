@@ -9,7 +9,7 @@ enabled = true
 [assets]
 directory = "./public"
 binding = "ASSETS"
-run_worker_first = ["/api/*", "/mcp", "/oauth/*", "/.well-known/*"]
+run_worker_first = ["/", "/api/*", "/mcp", "/oauth/*", "/.well-known/*", "/authorize", "/token", "/register"]
 not_found_handling = "single-page-application"
 
 [[durable_objects.bindings]]

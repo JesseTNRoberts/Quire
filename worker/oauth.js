@@ -114,7 +114,7 @@ export async function handleOAuth(request, env, origin) {
   if (request.method === 'OPTIONS' && (p.startsWith('/oauth/') || p.startsWith('/.well-known/'))) return cors();
 
   if (p.startsWith('/.well-known/oauth-protected-resource'))
-    return json({ resource: `${origin}/mcp`, authorization_servers: [origin], bearer_methods_supported: ['header'], scopes_supported: ['quire'], resource_name: 'Quire' });
+    return json({ resource: origin + (p.slice('/.well-known/oauth-protected-resource'.length) || ''), authorization_servers: [origin], bearer_methods_supported: ['header'], scopes_supported: ['quire'], resource_name: 'Quire' });
   if (p.startsWith('/.well-known/oauth-authorization-server') || p.startsWith('/.well-known/openid-configuration'))
     return json({
       issuer: origin, authorization_endpoint: `${origin}/oauth/authorize`, token_endpoint: `${origin}/oauth/token`,
