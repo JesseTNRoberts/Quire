@@ -198,8 +198,149 @@ function renderBook(main, fresh) {
     if (!beats.length) html = `<div class="empty"><img src="icons/logo.svg" width="56" alt=""><p>${S.q || S.filter !== 'all' ? 'No beats match.' : 'No beats yet. Import a repo from Settings, or tap + to start.'}</p></div>`;
     else html += `<p class="foot muted">${beats.length} beats · ${totalWords.toLocaleString()} words</p>`;
     list.innerHTML = html;
-    list.onclick = e => { const r = e.target.closest('.beatrow'); if (r) openBeat(r.dataset.id); };
+    list.onclick = e => { if (Date.now() - (list._dragEnd || 0) < 400) return; const r = e.target.closest('.beatrow'); if (r) openBeat(r.dataset.id); };
+    setupReorder(list, main);
   }
+}
+
+// ---------------- reorder in the Book list (press and hold, like moving an app on an iPhone) ----------------
+// A short buzz. Android: the Vibration API. iPhone (iOS 18+ Safari): toggling a hidden "switch" checkbox
+// gives a system haptic. Where neither works, the lift animation is the cue.
+let hapticEl = null;
+function haptic() {
+  try { if (navigator.vibrate && navigator.vibrate(12)) return; } catch {}
+  try {
+    if (!hapticEl) {
+      hapticEl = document.createElement('label'); hapticEl.className = 'haptic'; hapticEl.setAttribute('aria-hidden', 'true');
+      const i = document.createElement('input'); i.type = 'checkbox'; i.setAttribute('switch', ''); i.tabIndex = -1;
+      hapticEl.append(i); document.body.append(hapticEl);
+    }
+    hapticEl.click();
+  } catch {}
+}
+
+function setupReorder(list, main) {
+  if (list._reorder) return; list._reorder = true;
+  let d = null;
+  const canReorder = () => S.filter === 'all' && !S.q.trim();
+
+  const begin = () => {
+    if (!d || d.on) return;
+    if (!canReorder()) { toast('Clear the search and choose All to reorder beats.', 2200); d = null; return; }
+    d.on = true; haptic();
+    const items = [...list.querySelectorAll('.beatrow, h2.act')];
+    d.items = items.map(el => ({ el, r: el.getBoundingClientRect(), beat: el.classList.contains('beatrow') }));
+    d.from = d.items.findIndex(x => x.el === d.row);
+    d.h = d.items[d.from].r.height + parseFloat(getComputedStyle(d.row).marginBottom || 0);
+    d.slot = d.from; d.scroll0 = main.scrollTop;
+    list.classList.add('reordering'); d.row.classList.add('lifted');
+    document.body.classList.add('noselect');
+    tick();
+  };
+  // Where would the dragged row land? Returns the index (in d.items) of the slot.
+  const slotAt = y => {
+    const dy = main.scrollTop - d.scroll0;
+    let slot = d.items.length;
+    for (let i = 0; i < d.items.length; i++) { if (i === d.from) continue; const r = d.items[i].r, mid = r.top - dy + r.height / 2; if (y < mid) { slot = i; break; } }
+    if (slot > d.from) slot--;   // indices without the dragged row
+    return Math.max(0, slot);
+  };
+  const layout = () => {
+    const others = d.items.filter((_, i) => i !== d.from);
+    others.forEach((it, i) => {
+      const orig = d.items.indexOf(it);
+      let shift = 0;
+      if (orig > d.from && i < d.slot) shift = -d.h;      // moved up to fill the gap
+      if (orig < d.from && i >= d.slot) shift = d.h;      // pushed down to make room
+      it.el.style.transform = shift ? `translateY(${shift}px)` : '';
+    });
+    const dy = main.scrollTop - d.scroll0;
+    d.row.style.transform = `translateY(${d.y - d.y0 + dy}px) scale(1.03)`;
+  };
+  const tick = () => {
+    if (!d?.on) return;
+    // Auto-scroll near the edges of the list.
+    const r = main.getBoundingClientRect(), edge = 70;
+    const v = d.y < r.top + edge ? -(r.top + edge - d.y) / 4 : d.y > r.bottom - edge ? (d.y - (r.bottom - edge)) / 4 : 0;
+    if (v) main.scrollTop += Math.max(-18, Math.min(18, v));
+    d.slot = slotAt(d.y); layout();
+    d.raf = requestAnimationFrame(tick);
+  };
+  const finish = commit => {
+    if (!d) return;
+    clearTimeout(d.timer); cancelAnimationFrame(d.raf);
+    const was = d; d = null;
+    document.body.classList.remove('noselect');
+    if (!was.on) return;
+    list._dragEnd = Date.now();
+    list.classList.remove('reordering'); was.row.classList.remove('lifted');
+    was.items.forEach(it => it.el.style.transform = '');
+    if (!commit || was.slot === was.from) return;
+    // Work out "after which beat" (or "first in which act") from the new sequence.
+    const seq = was.items.filter((_, i) => i !== was.from);
+    const before = seq[was.slot - 1], afterEl = seq[was.slot];
+    const id = was.row.dataset.id;
+    let target;
+    if (before && before.beat) target = { after: before.el.dataset.id };
+    else { const next = seq.slice(was.slot).find(x => x.beat); target = next ? { before: next.el.dataset.id } : { after: [...seq].reverse().find(x => x.beat)?.el.dataset.id }; }
+    if (!target.after && !target.before) return;
+    moveBeatTo(id, target);
+    haptic();
+  };
+
+  list.addEventListener('pointerdown', e => {
+    const row = e.target.closest('.beatrow'); if (!row || e.button > 0) return;
+    d = { row, x0: e.clientX, y0: e.clientY, y: e.clientY, touch: e.pointerType !== 'mouse', on: false, pid: e.pointerId };
+    d.timer = setTimeout(begin, d.touch ? 380 : 260);
+  });
+  list.addEventListener('pointermove', e => {
+    if (!d) return;
+    d.y = e.clientY;
+    if (!d.on) {
+      const moved = Math.hypot(e.clientX - d.x0, e.clientY - d.y0);
+      if (d.touch && moved > 8) { clearTimeout(d.timer); d = null; }         // it's a scroll
+      else if (!d.touch && moved > 6) { clearTimeout(d.timer); begin(); }  // mouse: drag straight away
+      return;
+    }
+    e.preventDefault();
+    try { d.row.setPointerCapture(d.pid); } catch {}
+  });
+  list.addEventListener('touchmove', e => { if (d?.on) e.preventDefault(); }, { passive: false });
+  list.addEventListener('pointerup', () => finish(true));
+  list.addEventListener('pointercancel', () => finish(false));
+  list.addEventListener('contextmenu', e => { if (d) e.preventDefault(); });
+  addEventListener('keydown', e => { if (e.key === 'Escape' && d?.on) finish(false); });
+}
+
+// Move a beat in book order: right after another beat (same act), or first before a beat.
+// Keeps its stream; closes the gap it leaves and opens one where it lands, as the Storyboard did.
+function moveBeatTo(id, target) {
+  book.editBoard(bd => {
+    const me = bd.beats[id]; if (!me) return;
+    const step = CARD.step;
+    // 1. Close the gap it leaves, unless another card shares its column.
+    const oldX = me.x;
+    const shares = Object.entries(bd.beats).some(([k, p]) => k !== id && Math.abs(p.x - oldX) < CARD.w);
+    if (!shares) {
+      for (const [k, p] of Object.entries(bd.beats)) if (k !== id && p.x > oldX) p.x -= step;
+      for (const p of Object.values(bd.trash || {})) if (p.x > oldX) p.x -= step;
+      for (const n of bd.notes || []) if (n.x > oldX) n.x -= step;
+      for (const a of bd.acts || []) if (a.x > oldX) a.x -= step;
+      for (const dd of bd.days || []) if (dd.x > oldX) dd.x -= step;
+    }
+    // 2. Open a gap where it lands and put it there.
+    const ref = bd.beats[target.after || target.before]; if (!ref) return;
+    const from = target.after ? ref.x + 1 : ref.x, newX = target.after ? ref.x + step : ref.x;
+    for (const [k, p] of Object.entries(bd.beats)) if (k !== id && p.x >= from) p.x += step;
+    for (const p of Object.values(bd.trash || {})) if (p.x >= from) p.x += step;
+    for (const n of bd.notes || []) if (n.x >= from) n.x += step;
+    for (const a of bd.acts || []) if (a.x >= from && a.x > (target.before ? ref.x : -Infinity)) a.x += step;
+    for (const dd of bd.days || []) if (dd.x >= from) dd.x += step;
+    me.x = newX;
+    // Stay in the reference beat's act even if an act line sits just after it.
+    const actRef = actOf(bd, ref);
+    if (actOf(bd, me)?.id !== actRef?.id) { const nextAct = [...(bd.acts || [])].sort((a, b) => a.x - b.x).find(a => a.x > actRef.x); if (nextAct && nextAct.x <= me.x + CARD.w / 2) { const by = me.x + CARD.w / 2 - nextAct.x + 20; for (const a of bd.acts) if (a.x >= nextAct.x) a.x += by; for (const [k, p] of Object.entries(bd.beats)) if (k !== id && p.x > me.x) p.x += by; } }
+  });
 }
 
 // ---------------- editor ----------------
