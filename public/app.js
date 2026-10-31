@@ -1,5 +1,6 @@
 // Quire app UI. Plain DOM, no build step.
 import { pickBackend } from './backend.js';
+import { EditorState, EditorView, ViewPlugin, Decoration, keymap, placeholder, history as cmHistory, historyKeymap, defaultKeymap, Prec } from './vendor/codemirror.js';
 import { Book } from './sync.js';
 import { actOf, laneOf, CARD, manuscript, wordCount, exportTree, laneGeom, laneIndexAt, fitInLane, MIN_LANE_H, LINK_RE, CRIT_RE, parseLink, findLinks, findCritical, renameLinks, fileName } from './format.js';
 
@@ -139,7 +140,7 @@ async function bookMenu() {
 // ---------------- keyboard (desktop and tablets with keyboards) ----------------
 addEventListener('keydown', e => {
   if (e.key === 'Escape') { if ($('#ctx') && !$('#ctx').hidden) { hideCtx(); return; } if (S.linkFrom) { S.linkFrom = null; renderMain(); return; } if (!$('#sheet').hidden) { $('#sheet').hidden = true; return; } if (!$('#editor').hidden) { closeEditor(); return; } }
-  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
   if (typing || e.metaKey || e.ctrlKey || e.altKey || !book) return;
   const views = ['book', 'board', 'notes', 'settings'];
   if (/^[1-4]$/.test(e.key)) { setView(views[e.key - 1]); e.preventDefault(); }
@@ -150,7 +151,7 @@ addEventListener('keydown', e => {
     const i = rows.findIndex(r => r.dataset.id === S.openId), d = e.key === 'ArrowDown' || e.key === 'j' ? 1 : -1;
     const next = rows[Math.max(0, Math.min(rows.length - 1, i < 0 ? 0 : i + d))];
     openBeat(next.dataset.id); next.scrollIntoView({ block: 'nearest' }); e.preventDefault();
-  } else if (e.key === 'Enter' && S.openId) { $('#editor textarea:not([hidden])')?.focus(); e.preventDefault(); }
+  } else if (e.key === 'Enter' && S.openId) { activeTa()?.focus(); e.preventDefault(); }
 });
 
 // ---------------- book (list) view ----------------
@@ -363,14 +364,14 @@ function openBeat(id, focusTitle = false) {
     <div class="edmeta" id="edMeta"></div>
     <div class="conflict" id="edConflict" hidden></div>
     <div class="edtabs" id="edTabs">${TABS.map(([k, l]) => `<button data-tab="${k}" class="${S.tab === k ? 'on' : ''} ${k === 'adjust' ? 'adj' : ''}">${l}<i></i></button>`).join('')}</div>
-    <div class="edbody">${TABS.map(([k]) => { const cls = `${k === 'beat' ? 'prose' : ''} ${k === 'adjust' ? 'adjust' : ''}`; return `<textarea data-field="${k}" class="${cls}" ${S.tab === k ? '' : 'hidden'} spellcheck="true" placeholder="${{ beat: 'Write the beat…', synopsis: 'One or two sentences. The first works alone as a one-liner.', adjust: 'Instructions for Claude (optional)', notes: 'Notes, earlier versions, finished adjusts…' }[k]}"></textarea><div class="hl ${cls}" aria-hidden="true"></div>`; }).join('')}<div class="ac" id="ac" hidden></div></div>
+    <div class="edbody">${TABS.map(([k]) => `<div class="qed ${k === 'beat' ? 'prose' : ''} ${k === 'adjust' ? 'adjust' : ''}" data-field="${k}" ${S.tab === k ? '' : 'hidden'}></div>`).join('')}<div class="ac" id="ac" hidden></div></div>
     <div class="edlinks" id="edLinks"></div>
     <div class="edfoot"><span id="edWords"></span><span class="efs"><button data-efs="-1" aria-label="Smaller text">A−</button><span id="efsv"></span><button data-efs="1" aria-label="Larger text">A+</button></span><span id="edSaved"></span></div>`;
   applyEfs(); ed.querySelectorAll('[data-efs]').forEach(b => b.onclick = () => applyEfs(+b.dataset.efs));
-  for (const ta of ed.querySelectorAll('textarea')) {
-    ta.value = b[ta.dataset.field] || '';
-    ta.addEventListener('input', () => { book.edit(id, { [ta.dataset.field]: ta.value }); footer(); });
-    attachRich(ta, { kind: 'beat', id });
+  const PH = { beat: 'Write the beat…', synopsis: 'One or two sentences. The first works alone as a one-liner.', adjust: 'Instructions for Claude (optional)', notes: 'Notes, earlier versions, finished adjusts…' };
+  for (const el of ed.querySelectorAll('.qed')) {
+    const f = el.dataset.field;
+    new QEditor(el, { value: b[f] || '', placeholder: PH[f], owner: { kind: 'beat', id }, onChange: v => { book.edit(id, { [f]: v }); footer(); } });
   }
   S.origTitle = b.title;
   $('#edTitle').addEventListener('input', e => book.edit(id, { title: e.target.value }));
@@ -378,7 +379,7 @@ function openBeat(id, focusTitle = false) {
   $('#edBack').onclick = closeEditor;
   $('#edMore').onclick = () => beatMenu(id);
   $('#edFull').onclick = () => document.body.classList.toggle('edfull');
-  $('#edTabs').onclick = e => { const t = e.target.closest('[data-tab]'); if (!t) return; S.tab = t.dataset.tab; ed.querySelectorAll('[data-tab]').forEach(x => x.classList.toggle('on', x === t)); ed.querySelectorAll('textarea').forEach(x => x.hidden = x.dataset.field !== S.tab); footer(); linkStrip(); };
+  $('#edTabs').onclick = e => { const t = e.target.closest('[data-tab]'); if (!t) return; S.tab = t.dataset.tab; ed.querySelectorAll('[data-tab]').forEach(x => x.classList.toggle('on', x === t)); ed.querySelectorAll('.qed').forEach(x => x.hidden = x.dataset.field !== S.tab); footer(); linkStrip(); };
   editorMeta(); footer(); conflictBanner(); linkStrip();
   if (focusTitle) { const t = $('#edTitle'); t.focus(); t.select(); }
   renderMain();
@@ -472,35 +473,90 @@ function rich(text) {
   return parts.join('');
 }
 
-// The backdrop paints highlights exactly under the textarea's own text (text itself stays native and editable).
-function markup(text) {
-  const marks = [];
-  for (const m of text.matchAll(CRIT_RE)) marks.push([m.index, m.index + m[0].length, 'crit']);
-  for (const m of text.matchAll(LINK_RE)) marks.push([m.index, m.index + m[0].length, resolveLink(parseLink(m[1]).target) ? 'wl' : 'wl broken']);
-  if (!marks.length) return esc(text);
-  const cuts = [...new Set([0, text.length, ...marks.flatMap(m => [m[0], m[1]])])].sort((x, y) => x - y);
-  let out = '';
-  for (let i = 0; i < cuts.length - 1; i++) {
-    const s = cuts[i], e = cuts[i + 1], cls = marks.filter(m => m[0] <= s && m[1] >= e).map(m => m[2]).join(' ');
-    out += cls ? `<span class="${cls}">${esc(text.slice(s, e))}</span>` : esc(text.slice(s, e));
+// ---------- the editor: CodeMirror with live preview ----------
+// [[links]] and ==critical details== are drawn rendered (no markup characters) except where the cursor is,
+// so they can still be edited. The class below gives each editor a small textarea-like interface
+// (value, selectionStart/End, focus) so the link, critical and autocomplete helpers work unchanged.
+const hideMark = Decoration.replace({});
+function previewDecorations(view) {
+  const text = view.state.doc.toString(), sel = view.state.selection.ranges, focus = view.hasFocus;
+  const near = (a, b) => focus && sel.some(r => r.from <= b && r.to >= a);
+  const out = [];
+  for (const m of text.matchAll(CRIT_RE)) {
+    const a = m.index, b = a + m[0].length;
+    if (near(a, b)) out.push(Decoration.mark({ class: 'cm-crit cm-raw' }).range(a, b));
+    else { out.push(hideMark.range(a, a + 2), Decoration.mark({ class: 'cm-crit' }).range(a + 2, b - 2), hideMark.range(b - 2, b)); }
   }
-  return out;
+  for (const m of text.matchAll(LINK_RE)) {
+    const a = m.index, b = a + m[0].length, l = parseLink(m[1]);
+    const attributes = { 'data-link': l.target, title: 'Link to ' + l.target };
+    const cls = 'cm-wl' + (resolveLink(l.target) ? '' : ' broken');
+    if (near(a, b)) { out.push(Decoration.mark({ class: cls + ' cm-raw', attributes }).range(a, b)); continue; }
+    const bar = m[1].indexOf('|');
+    let show = bar >= 0 ? a + 2 + bar + 1 : a + 2;
+    if (show >= b - 2) show = a + 2;
+    out.push(hideMark.range(a, show), Decoration.mark({ class: cls, attributes }).range(show, b - 2), hideMark.range(b - 2, b));
+  }
+  return Decoration.set(out, true);
+}
+const livePreview = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = previewDecorations(view); }
+  update(u) { if (u.docChanged || u.selectionSet || u.focusChanged || u.viewportChanged) this.decorations = previewDecorations(u.view); }
+}, { decorations: v => v.decorations });
+
+const minimalChange = (a, b) => {
+  let s = 0; while (s < a.length && s < b.length && a[s] === b[s]) s++;
+  let e = 0; while (e < a.length - s && e < b.length - s && a[a.length - 1 - e] === b[b.length - 1 - e]) e++;
+  return { from: s, to: a.length - e, insert: b.slice(s, b.length - e) };
+};
+
+class QEditor {
+  constructor(el, { value = '', placeholder: ph = '', owner, onChange }) {
+    this.el = el; el._q = this; this._owner = owner; this.onChange = onChange; this.remote = false;
+    const self = this;
+    this.view = new EditorView({
+      parent: el,
+      state: EditorState.create({
+        doc: value,
+        extensions: [
+          cmHistory(), keymap.of([...historyKeymap, ...defaultKeymap]), EditorView.lineWrapping, placeholder(ph), livePreview,
+          EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'on', autocapitalize: 'sentences', 'aria-label': ph || 'Text' }),
+          EditorView.updateListener.of(u => {
+            if (u.docChanged && !self.remote) self.onChange?.(self.value);
+            if (!self.remote && u.view.hasFocus && (u.docChanged || u.selectionSet || u.focusChanged)) { linkStrip(); autocomplete(self); }
+          }),
+          // The [[ list gets first say over Enter, Tab, arrows and Escape.
+          Prec.highest(EditorView.domEventHandlers({ keydown: e => { acKey(e, self); return e.defaultPrevented; } })),
+          EditorView.domEventHandlers({
+            mousedown: e => {   // Cmd/Ctrl-click a rendered link to open it
+              const l = e.target.closest?.('.cm-wl');
+              if (l && (e.metaKey || e.ctrlKey)) { const t = resolveLink(l.dataset.link); if (t) { e.preventDefault(); setTimeout(() => openTarget(t)); return true; } }
+              return false;
+            },
+            blur: () => { setTimeout(() => { if (!$('#ac')?.matches(':hover')) hideAc(); }, 150); return false; },
+          }),
+        ],
+      }),
+    });
+  }
+  get value() { return this.view.state.doc.toString(); }
+  get selectionStart() { return this.view.state.selection.main.from; }
+  get selectionEnd() { return this.view.state.selection.main.to; }
+  get hidden() { return this.el.hidden; }
+  focus() { this.view.focus(); }
+  // A change made by Quire on the user's behalf (Critical button, link pick…): saved like typing.
+  setValue(v, s, e) {
+    this.view.dispatch({ changes: minimalChange(this.value, v), selection: { anchor: s, head: e ?? s }, scrollIntoView: true, userEvent: 'input' });
+  }
+  // A change from another device: merged in place; the cursor moves with the text.
+  setRemote(v) {
+    if (v === this.value) return;
+    this.remote = true;
+    try { this.view.dispatch({ changes: minimalChange(this.value, v) }); } finally { this.remote = false; }
+  }
 }
 
-function attachRich(ta, owner) {
-  const hl = ta.nextElementSibling;
-  const render = () => { hl.innerHTML = markup(ta.value) + '<br>'; hl.scrollTop = ta.scrollTop; };
-  ta._render = render; ta._owner = owner;
-  render();
-  ta.addEventListener('input', () => { render(); autocomplete(ta); });
-  ta.addEventListener('scroll', () => { hl.scrollTop = ta.scrollTop; });
-  const caret = () => { linkStrip(); autocomplete(ta); };
-  ta.addEventListener('click', caret); ta.addEventListener('keyup', e => { if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(e.key) || $('#ac').hidden) caret(); });
-  ta.addEventListener('keydown', e => acKey(e, ta));
-  ta.addEventListener('blur', () => setTimeout(() => { if (!$('#ac')?.matches(':hover')) hideAc(); }, 150));
-}
-
-function activeTa() { return $('#editor textarea:not([hidden])'); }
+function activeTa() { return $('#editor .qed:not([hidden])')?._q; }
 function linkAtCaret(ta) {
   const p = ta.selectionStart;
   for (const l of findLinks(ta.value)) if (p > l.index && p < l.index + l.length) return l;
@@ -525,8 +581,7 @@ function linkStrip() {
 }
 
 function editTa(ta, value, selStart, selEnd) {
-  ta.focus(); ta.value = value; ta.setSelectionRange(selStart, selEnd ?? selStart);
-  ta.dispatchEvent(new Event('input')); linkStrip();
+  ta.focus(); ta.setValue(value, selStart, selEnd ?? selStart); linkStrip();
 }
 function toggleCritical(ta) {
   if (!ta) return;
@@ -647,14 +702,14 @@ applyEfs();
 function syncEditor(detail) {
   const ed = $('#editor'); if (ed.hidden) return;
   if (ed.dataset.kind === 'file') {
-    const f = book.file(S.openFile), ta = $('textarea', ed);
-    if (f && ta && ta.value !== f.content) setKeepingCaret(ta, f.content || '');
+    const f = book.file(S.openFile), q = $('.qed', ed)?._q;
+    if (f && q && q.value !== (f.content || '')) q.setRemote(f.content || '');
     return;
   }
   const b = book.beat(S.openId); if (!b) return;
-  for (const ta of ed.querySelectorAll('textarea')) {
-    const v = b[ta.dataset.field] || '';
-    if (ta.value !== v) setKeepingCaret(ta, v);
+  for (const el of ed.querySelectorAll('.qed')) {
+    const q = el._q, v = b[el.dataset.field] || '';
+    if (q && q.value !== v) q.setRemote(v);
   }
   const t = $('#edTitle');
   if (t && t.value !== b.title && document.activeElement !== t) t.value = b.title;
@@ -1092,13 +1147,12 @@ function openFile(path) {
   S.openFile = path; S.openId = null;
   const ed = $('#editor'), wasOpen = !ed.hidden; ed.hidden = false; ed.dataset.kind = 'file'; document.body.classList.add('editing');
   ed.innerHTML = `<div class="edhead"><button class="icon" id="edBack" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><div class="title static">${esc(path)}</div><button class="icon" id="edDel" aria-label="Delete note"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg></button></div>
-    <div class="edbody"><textarea class="prose" spellcheck="true"></textarea><div class="hl prose" aria-hidden="true"></div><div class="ac" id="ac" hidden></div></div>
+    <div class="edbody"><div class="qed prose"></div><div class="ac" id="ac" hidden></div></div>
     <div class="edlinks" id="edLinks"></div>
     <div class="edfoot"><span></span><span class="efs"><button data-efs="-1" aria-label="Smaller text">A−</button><span id="efsv"></span><button data-efs="1" aria-label="Larger text">A+</button></span><span id="edSaved"></span></div>`;
-  const ta = $('textarea', ed); ta.value = f.content || '';
-  ta.oninput = () => book.editFile(path, ta.value);
+  new QEditor($('.qed', ed), { value: f.content || '', placeholder: 'Write…', owner: { kind: 'file', id: path }, onChange: v => book.editFile(path, v) });
   applyEfs(); ed.querySelectorAll('[data-efs]').forEach(b => b.onclick = () => applyEfs(+b.dataset.efs));
-  attachRich(ta, { kind: 'file', id: path }); linkStrip();
+  linkStrip();
   $('#edBack').onclick = closeEditor;
   $('#edDel').onclick = () => { if (confirmTwice($('#edDel'))) { book.editFile(path, f.content || '', true); closeEditor(); toast('Note removed. It stays in the GitHub history.'); } };
   history[wasOpen ? 'replaceState' : 'pushState']({ beat: path }, '');

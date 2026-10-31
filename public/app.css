@@ -312,3 +312,23 @@ mark.crit { background: color-mix(in srgb, var(--accent) 22%, transparent); colo
 .s .wl, .cs .wl, .critrow .wl { color: #3B5F95; text-decoration: underline; text-decoration-color: color-mix(in srgb, #5B7DB1 55%, transparent); text-underline-offset: 2px; }
 .s .wl.broken, .cs .wl.broken { color: var(--bad); text-decoration-style: dashed; }
 @media (prefers-color-scheme: dark) { .s .wl, .cs .wl, .critrow .wl { color: #9DB8E6; } }
+
+/* ---------- the editor (CodeMirror, live preview) ---------- */
+.edbody .qed { flex: 1; min-width: 0; min-height: 0; display: flex; position: relative; }
+.qed .cm-editor { flex: 1; height: 100%; background: transparent; color: var(--ink); }
+.qed .cm-editor.cm-focused { outline: none; }
+.qed .cm-scroller { overflow: auto; font-family: inherit; line-height: inherit; overscroll-behavior: contain; }
+.qed .cm-content { padding: 18px 18px 48px; font: calc(16px * var(--efs, 1))/1.6 var(--ui); caret-color: var(--accent); }
+.qed.prose .cm-content { font: calc(18px * var(--efs, 1))/1.7 var(--prose); flex-grow: 0; flex-basis: 40em; max-width: 100%; margin: 0 auto; box-sizing: border-box; }
+.qed .cm-line { padding: 0; }
+.qed .cm-placeholder { color: var(--muted); }
+.qed.adjust { background: color-mix(in srgb, var(--adj) 45%, transparent); }
+.qed .cm-selectionBackground, .qed .cm-focused .cm-selectionBackground { background: color-mix(in srgb, #5B7DB1 28%, transparent) !important; }
+.qed ::selection { background: color-mix(in srgb, #5B7DB1 30%, transparent); }
+.cm-crit { background: color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 3px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.cm-crit.cm-raw { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+.cm-wl { color: #3B5F95; text-decoration: underline; text-decoration-color: color-mix(in srgb, #5B7DB1 60%, transparent); text-underline-offset: 3px; }
+.cm-wl.cm-raw { text-decoration: none; background: color-mix(in srgb, #5B7DB1 12%, transparent); border-radius: 3px; }
+.cm-wl.broken { color: var(--bad); text-decoration-style: dashed; }
+@media (prefers-color-scheme: dark) { .cm-wl { color: #9DB8E6; } }
+@media (min-width: 1200px) { .qed.prose .cm-content { font-size: calc(19px * var(--efs, 1)); } }
