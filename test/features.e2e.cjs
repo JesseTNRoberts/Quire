@@ -39,6 +39,11 @@ const ok = m => console.log('  ✓ ' + m);
   const shown2 = await p.$eval(q('notes') + ' .cm-content', el => [...el.querySelectorAll('.cm-line')].pop().innerText);
   assert.ok(shown2.includes('the lamp tower') && !shown2.includes(second) && !shown2.includes('|'), 'your words shown, target hidden: ' + shown2);
   ok('Link on selected words keeps your words and hides the target');
+  // clicking the link mark opens the target
+  await p.click(q('notes') + ' .cm-wlmark >> nth=-1'); await p.waitForTimeout(400);
+  assert.equal(await p.inputValue('#edTitle'), second, 'link mark opened the linked beat');
+  await p.locator('.beatrow').first().click(); await p.click('[data-tab=notes]');
+  ok('clicking the link mark opens the linked beat');
 
   // B. history and restore
   await p.waitForFunction(() => quire.book.pending() === 0, null, { timeout: 10000 });

@@ -202,7 +202,11 @@ function renderBook(main, fresh) {
     if (!beats.length) html = `<div class="empty"><img src="icons/logo.svg" width="56" alt=""><p>${S.q || S.filter !== 'all' ? 'No beats match.' : 'No beats yet. Import a repo from Settings, or tap + to start.'}</p></div>`;
     else html += `<p class="foot muted">${beats.length} beats · ${totalWords.toLocaleString()} words</p>`;
     list.innerHTML = html;
-    list.onclick = e => { if (Date.now() - (list._dragEnd || 0) < 400) return; const r = e.target.closest('.beatrow'); if (r) openBeat(r.dataset.id); };
+    list.onclick = e => {
+      if (Date.now() - (list._dragEnd || 0) < 400) return;
+      const mk = e.target.closest('.wlmark'); if (mk) { const t = resolveLink(mk.dataset.link); if (t) { e.stopPropagation(); return openTarget(t); } }
+      const r = e.target.closest('.beatrow'); if (r) openBeat(r.dataset.id);
+    };
     setupReorder(list, main);
   }
 }
@@ -547,7 +551,7 @@ function rich(text) {
     if (m[1] !== undefined) parts.push(`<mark class="crit">${rich(m[1])}</mark>`);
     else {
       const l = parseLink(m[2]), ok = !!resolveLink(l.target), tip = esc(ok ? '→ ' + l.target : 'No beat or note called “' + l.target + '”');
-      const markEl = `<span class="wlmark${ok ? '' : ' broken'}" data-tip="${tip}" title="${tip}">${LINK_SVG}</span>`;
+      const markEl = `<span class="wlmark${ok ? '' : ' broken'}" data-link="${esc(l.target)}" data-tip="${tip}" title="${tip}">${LINK_SVG}</span>`;
       parts.push(l.alias ? `<span class="wl${ok ? '' : ' broken'}" data-tip="${tip}">${esc(l.alias)}</span>${markEl}` : markEl);
     }
     i = m.index + m[0].length;
@@ -625,10 +629,15 @@ class QEditor {
           // The [[ list gets first say over Enter, Tab, arrows and Escape.
           Prec.highest(EditorView.domEventHandlers({ keydown: e => { acKey(e, self); return e.defaultPrevented; } })),
           EditorView.domEventHandlers({
-            mousedown: e => {   // Cmd/Ctrl-click a rendered link to open it
-              const l = e.target.closest?.('.cm-wl, .cm-wlmark');
-              if (l && (e.metaKey || e.ctrlKey)) { const t = resolveLink(l.dataset.link); if (t) { e.preventDefault(); setTimeout(() => openTarget(t)); return true; } }
+            mousedown: e => {   // the link mark opens its target; Cmd/Ctrl-click opens from the linked words too
+              const mk = e.target.closest?.('.cm-wlmark'), l = mk || ((e.metaKey || e.ctrlKey) && e.target.closest?.('.cm-wl'));
+              if (l) { e.preventDefault(); const t = resolveLink(l.dataset.link); if (t) setTimeout(() => openTarget(t)); else toast('Nothing called “' + l.dataset.link + '” yet.'); return true; }
               return false;
+            },
+            touchstart: e => { if (e.target.closest?.('.cm-wlmark')) { e.preventDefault(); return true; } return false; },
+            touchend: e => {
+              const mk = e.target.closest?.('.cm-wlmark'); if (!mk) return false;
+              e.preventDefault(); const t = resolveLink(mk.dataset.link); if (t) setTimeout(() => openTarget(t)); else toast('Nothing called “' + mk.dataset.link + '” yet.'); return true;
             },
             blur: () => { setTimeout(() => { if (!$('#ac')?.matches(':hover')) hideAc(); }, 150); return false; },
           }),
